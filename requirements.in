@@ -1,0 +1,9 @@
+Django<4
+djangorestframework<4
+django-cors-headers
+channels
+channels_redis
+psycopg2-binary>=2.8
+dj-database-url
+django-heroku
+firebase-admin
