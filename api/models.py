@@ -32,6 +32,13 @@ class Message(models.Model):
     timestamp = models.DateTimeField(auto_now_add=True)
 
 
+class JoinRequest(models.Model):
+    id = models.AutoField(primary_key=True)
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    room = models.ForeignKey(Room, on_delete=models.CASCADE)
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+
 class Notification(models.Model):
     id = models.AutoField(primary_key=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE)
@@ -45,23 +52,37 @@ class Notification(models.Model):
     user_left = models.ForeignKey(
         User, related_name="left_user", on_delete=models.CASCADE, null=True
     )
+    join_request = models.ForeignKey(JoinRequest, on_delete=models.CASCADE, null=True)
 
     def clean(self):
         if (
-            (not (self.message or self.user_joined or self.user_left))
-            or (self.message and (self.user_joined or self.user_left))
-            or (self.user_joined and (self.message or self.user_left))
-            or (self.user_left and (self.message or self.user_joined))
+            (
+                not (
+                    self.message
+                    or self.user_joined
+                    or self.user_left
+                    or self.user_join_request
+                )
+            )
+            or (
+                self.message
+                and (self.user_joined or self.user_left or self.user_join_request)
+            )
+            or (
+                self.user_joined
+                and (self.message or self.user_left or self.user_join_request)
+            )
+            or (
+                self.user_left
+                and (self.message or self.user_joined or self.user_join_request)
+            )
+            or (
+                self.user_join_request
+                and (self.message or self.user_joined or self.user_left)
+            )
         ):
             raise ValidationError(
                 _(
-                    "Notification must be for either a new message, user leaving or user joining."
+                    "Notification must be for either a new message, user leaving, user joining or join request."
                 )
             )
-
-
-class JoinRequest(models.Model):
-    id = models.AutoField(primary_key=True)
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
-    room = models.ForeignKey(Room, on_delete=models.CASCADE)
-    timestamp = models.DateTimeField(auto_now_add=True)

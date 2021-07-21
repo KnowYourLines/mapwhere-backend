@@ -134,6 +134,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 "read",
                 "user_joined__display_name",
                 "user_left__display_name",
+                "join_request__user__display_name",
             )
             .order_by("read", "-timestamp")
         )
@@ -220,6 +221,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
         for user in self.room.members.all():
             Notification.objects.create(user=user, room=self.room, message=new_message)
 
+    def create_join_request_notification_for_all_room_members(self, join_request):
+        for user in self.room.members.all():
+            Notification.objects.create(
+                user=user, room=self.room, join_request=join_request
+            )
+
     def create_user_joined_notification_for_all_room_members(self, user_joining):
         if user_joining is self.user:
             if not self.user.display_name:
@@ -249,7 +256,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
         return new_message
 
     def get_or_create_new_join_request(self):
-        return JoinRequest.objects.get_or_create(user=self.user, room=self.room)
+        join_request, created = JoinRequest.objects.get_or_create(
+            user=self.user, room=self.room
+        )
+        if created:
+            self.create_join_request_notification_for_all_room_members(join_request)
+        return created
 
     def approve_room_member(self, username):
         user = User.objects.get(username=username)
@@ -312,7 +324,20 @@ class ChatConsumer(AsyncWebsocketConsumer):
             )
             user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
             if user_not_allowed:
-                await database_sync_to_async(self.get_or_create_new_join_request)()
+                created = await database_sync_to_async(
+                    self.get_or_create_new_join_request
+                )()
+                if created:
+                    rooms_to_notify = await database_sync_to_async(
+                        self.get_rooms_of_all_members
+                    )()
+                    for room in rooms_to_notify:
+                        await self.channel_layer.group_send(
+                            room,
+                            {
+                                "type": "refresh_notifications",
+                            },
+                        )
                 await self.channel_layer.group_send(
                     self.room_group_name,
                     {"type": "refresh_join_requests"},
@@ -489,7 +514,20 @@ class ChatConsumer(AsyncWebsocketConsumer):
             )
             user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
             if user_not_allowed:
-                await database_sync_to_async(self.get_or_create_new_join_request)()
+                created = await database_sync_to_async(
+                    self.get_or_create_new_join_request
+                )()
+                if created:
+                    rooms_to_notify = await database_sync_to_async(
+                        self.get_rooms_of_all_members
+                    )()
+                    for room in rooms_to_notify:
+                        await self.channel_layer.group_send(
+                            room,
+                            {
+                                "type": "refresh_notifications",
+                            },
+                        )
                 await self.channel_layer.group_send(
                     self.room_group_name,
                     {"type": "refresh_join_requests"},
