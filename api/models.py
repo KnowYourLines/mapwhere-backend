@@ -53,6 +53,8 @@ class Notification(models.Model):
         User, related_name="left_user", on_delete=models.CASCADE, null=True
     )
     join_request = models.ForeignKey(JoinRequest, on_delete=models.CASCADE, null=True)
+    now_private = models.BooleanField(null=True)
+    now_public = models.BooleanField(null=True)
 
     def clean(self):
         if (
@@ -62,27 +64,74 @@ class Notification(models.Model):
                     or self.user_joined
                     or self.user_left
                     or self.user_join_request
+                    or self.now_public
+                    or self.now_private
                 )
             )
             or (
                 self.message
-                and (self.user_joined or self.user_left or self.user_join_request)
+                and (
+                    self.user_joined
+                    or self.user_left
+                    or self.user_join_request
+                    or self.now_public
+                    or self.now_private
+                )
             )
             or (
                 self.user_joined
-                and (self.message or self.user_left or self.user_join_request)
+                and (
+                    self.message
+                    or self.user_left
+                    or self.user_join_request
+                    or self.now_public
+                    or self.now_private
+                )
             )
             or (
                 self.user_left
-                and (self.message or self.user_joined or self.user_join_request)
+                and (
+                    self.message
+                    or self.user_joined
+                    or self.user_join_request
+                    or self.now_public
+                    or self.now_private
+                )
             )
             or (
                 self.user_join_request
-                and (self.message or self.user_joined or self.user_left)
+                and (
+                    self.message
+                    or self.user_joined
+                    or self.user_left
+                    or self.now_public
+                    or self.now_private
+                )
+            )
+            or (
+                self.now_public
+                and (
+                    self.message
+                    or self.user_joined
+                    or self.user_left
+                    or self.user_join_request
+                    or self.now_private
+                )
+            )
+            or (
+                self.now_private
+                and (
+                    self.message
+                    or self.user_joined
+                    or self.user_left
+                    or self.user_join_request
+                    or self.now_public
+                )
             )
         ):
             raise ValidationError(
                 _(
-                    "Notification must be for either a new message, user leaving, user joining or join request."
+                    "Notification must be for either a new message, user leaving, user joining, join request or "
+                    "privacy change. "
                 )
             )
