@@ -6,18 +6,18 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('api', '0008_notification_join_request'),
+        ("api", "0008_notification_join_request"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='notification',
-            name='now_private',
+            model_name="notification",
+            name="now_private",
             field=models.BooleanField(null=True),
         ),
         migrations.AddField(
-            model_name='notification',
-            name='now_public',
+            model_name="notification",
+            name="now_public",
             field=models.BooleanField(null=True),
         ),
     ]

@@ -1,9 +1,6 @@
 import logging
-import os
 
-import firebase_admin
 from firebase_admin import auth
-from firebase_admin import credentials
 from rest_framework import authentication
 
 from api.models import User

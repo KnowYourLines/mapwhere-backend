@@ -7,13 +7,17 @@ import django.db.models.deletion
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('api', '0007_notification_user_left'),
+        ("api", "0007_notification_user_left"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='notification',
-            name='join_request',
-            field=models.ForeignKey(null=True, on_delete=django.db.models.deletion.CASCADE, to='api.joinrequest'),
+            model_name="notification",
+            name="join_request",
+            field=models.ForeignKey(
+                null=True,
+                on_delete=django.db.models.deletion.CASCADE,
+                to="api.joinrequest",
+            ),
         ),
     ]
