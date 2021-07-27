@@ -1,0 +1,30 @@
+setup:
+  addons:
+    - plan: heroku-postgresql
+      as: DATABASE
+    - plan: heroku-redis
+      as: REDIS
+  config:
+    SECRET_KEY: change-me-to-50-secret-characters
+    DEBUG: True
+    CORS_ALLOWED_ORIGINS: frontend
+    FIREBASE_PROJECT_ID: don't
+    FIREBASE_PRIVATE_KEY_ID: commit
+    FIREBASE_PRIVATE_KEY: these
+    FIREBASE_CLIENT_EMAIL: to
+    FIREBASE_CLIENT_ID: version
+    FIREBASE_CLIENT_CERT_URL: control
+    ALLOWED_HOSTS: frontend
+build:
+  docker:
+    web: Dockerfile
+release:
+  image: web
+  command:
+    - python manage.py makemigrations api; python manage.py migrate
+run:
+  web: daphne server.asgi:application --port $PORT --bind 0.0.0.0
+  worker:
+    command:
+      - python manage.py runworker channel_layer
+    image: web

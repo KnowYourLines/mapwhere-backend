@@ -1,0 +1,35 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres
+    environment:
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+  redis:
+    image: redis:5
+    ports:
+      - "6379:6379"
+  web:
+    build: .
+    command: bash -c 'while !</dev/tcp/db/5432; do sleep 1; done; python manage.py makemigrations api; python manage.py migrate; python manage.py runserver 0.0.0.0:8000'
+    volumes:
+      - .:/code
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/postgres
+      - REDIS_URL=redis://redis:6379/
+      - SECRET_KEY=!!f1r=78mf)an7i&t8yqy*#e%*wwcx59am^8(xor#11uh^98kt
+      - DEBUG=True
+      - LOCAL=True
+      - FIREBASE_PROJECT_ID=
+      - FIREBASE_PRIVATE_KEY_ID=
+      - FIREBASE_PRIVATE_KEY=
+      - FIREBASE_CLIENT_EMAIL=
+      - FIREBASE_CLIENT_ID=
+      - FIREBASE_CLIENT_CERT_URL=
+      - ALLOWED_HOSTS=
