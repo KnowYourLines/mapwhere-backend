@@ -51,7 +51,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 async_to_sync(self.channel_layer.send)(
                     self.channel_name,
                     {
-                        "type": "chat_message",
+                        "type": "fetching_message",
                         "message": f"{message['display_name']}: {message['content']}",
                     },
                 )
@@ -597,6 +597,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
         # Send message to WebSocket
         await self.send(text_data=json.dumps({"message": message}))
+
+    async def fetching_message(self, event):
+        message = event["message"]
+
+        # Send message to WebSocket
+        await self.send(text_data=json.dumps({"fetching_message": message}))
 
     async def display_name(self, event):
         name = event["new_display_name"]
