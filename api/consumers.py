@@ -5,7 +5,7 @@ from asgiref.sync import async_to_sync
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 
-from api.models import Message, Room, User, JoinRequest, Notification
+from api.models import Message, Room, User, JoinRequest, Notification, LocationBubble
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,26 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 )
         except Message.DoesNotExist:
             pass
+
+    def update_location_bubble(
+        self, address, latitude, longitude, transportation, hours, minutes
+    ):
+        location_bubble, created = LocationBubble.objects.update_or_create(
+            user=self.user,
+            room=self.room,
+            defaults={
+                "address": address,
+                "latitude": latitude,
+                "longitude": longitude,
+                "transportation": transportation,
+                "hours": hours,
+                "minutes": minutes,
+            },
+        )
+        logger.debug(
+            f"bubble: {location_bubble.address} {location_bubble.latitude} {location_bubble.longitude} {location_bubble.transportation} {location_bubble.hours} {location_bubble.minutes}"
+        )
+        return created
 
     def update_display_name(self, new_name):
         self.user.display_name = new_name
@@ -355,6 +375,27 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     room,
                     {"type": "refresh_chat"},
                 )
+        elif input_payload.get("command") == "update_location_bubble":
+            await database_sync_to_async(self.update_location_bubble)(
+                input_payload["address"],
+                input_payload["latitude"],
+                input_payload["longitude"],
+                input_payload["transportation"],
+                input_payload["hours"],
+                input_payload["minutes"],
+            )
+            rooms_to_notify = await database_sync_to_async(
+                self.get_rooms_of_all_members
+            )()
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_area"},
+            )
+            for room in rooms_to_notify:
+                await self.channel_layer.group_send(
+                    room,
+                    {"type": "refresh_notifications"},
+                )
         elif input_payload.get("command") == "fetch_room_name":
             user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
             if not user_not_allowed:
@@ -649,6 +690,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def refresh_members(self, event):
         # Send message to WebSocket
         await self.send(text_data=json.dumps({"refresh_members": True}))
+
+    async def refresh_area(self, event):
+        # Send message to WebSocket
+        await self.send(text_data=json.dumps({"refresh_area": True}))
 
     async def refresh_notifications(self, event):
         # Send message to WebSocket

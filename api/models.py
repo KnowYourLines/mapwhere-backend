@@ -39,6 +39,36 @@ class JoinRequest(models.Model):
     timestamp = models.DateTimeField(auto_now_add=True)
 
 
+class LocationBubble(models.Model):
+    id = models.AutoField(primary_key=True)
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    room = models.ForeignKey(Room, on_delete=models.CASCADE)
+    address = models.TextField()
+    latitude = models.FloatField()
+    longitude = models.FloatField()
+    hours = models.PositiveIntegerField()
+    minutes = models.PositiveIntegerField()
+
+    BIKE = "bike"
+    TRANSIT = "transit"
+    WALK = "walk"
+    CAR = "car"
+    TRANSPORTATION_CHOICES = [
+        (BIKE, "bike"),
+        (TRANSIT, "transit"),
+        (WALK, "walk"),
+        (CAR, "car"),
+    ]
+    transportation = models.CharField(
+        max_length=max([len(choice[0]) for choice in TRANSPORTATION_CHOICES]),
+        choices=TRANSPORTATION_CHOICES,
+    )
+
+    def clean(self):
+        if self.hours == 0 and self.minutes == 0:
+            raise ValidationError(_("Total travel time cannot be zero."))
+
+
 class Notification(models.Model):
     id = models.AutoField(primary_key=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE)
