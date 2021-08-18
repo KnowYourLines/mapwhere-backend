@@ -73,6 +73,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 "minutes": minutes,
             },
         )
+        self.create_user_location_notification()
         logger.debug(
             f"bubble: {location_bubble.address} {location_bubble.latitude} {location_bubble.longitude} {location_bubble.transportation} {location_bubble.hours} {location_bubble.minutes}"
         )
@@ -165,6 +166,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 "read",
                 "user_joined__display_name",
                 "user_left__display_name",
+                "user_location__display_name",
                 "join_request__user__display_name",
                 "now_public",
                 "now_private",
@@ -266,6 +268,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
         for user in self.room.members.all():
             Notification.objects.create(
                 user=user, room=self.room, join_request=join_request
+            )
+
+    def create_user_location_notification(self):
+        for user in self.room.members.all():
+            Notification.objects.create(
+                user=user, room=self.room, user_location=self.user
             )
 
     def create_user_joined_notification_for_all_room_members(self, user_joining):

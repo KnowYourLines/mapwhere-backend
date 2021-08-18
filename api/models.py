@@ -82,6 +82,9 @@ class Notification(models.Model):
     user_left = models.ForeignKey(
         User, related_name="left_user", on_delete=models.CASCADE, null=True
     )
+    user_location = models.ForeignKey(
+        User, related_name="location_user", on_delete=models.CASCADE, null=True
+    )
     join_request = models.ForeignKey(JoinRequest, on_delete=models.CASCADE, null=True)
     now_private = models.BooleanField(null=True)
     now_public = models.BooleanField(null=True)
@@ -96,6 +99,7 @@ class Notification(models.Model):
                     or self.user_join_request
                     or self.now_public
                     or self.now_private
+                    or self.user_location
                 )
             )
             or (
@@ -106,6 +110,7 @@ class Notification(models.Model):
                     or self.user_join_request
                     or self.now_public
                     or self.now_private
+                    or self.user_location
                 )
             )
             or (
@@ -116,6 +121,7 @@ class Notification(models.Model):
                     or self.user_join_request
                     or self.now_public
                     or self.now_private
+                    or self.user_location
                 )
             )
             or (
@@ -126,6 +132,7 @@ class Notification(models.Model):
                     or self.user_join_request
                     or self.now_public
                     or self.now_private
+                    or self.user_location
                 )
             )
             or (
@@ -136,6 +143,7 @@ class Notification(models.Model):
                     or self.user_left
                     or self.now_public
                     or self.now_private
+                    or self.user_location
                 )
             )
             or (
@@ -146,6 +154,7 @@ class Notification(models.Model):
                     or self.user_left
                     or self.user_join_request
                     or self.now_private
+                    or self.user_location
                 )
             )
             or (
@@ -156,12 +165,24 @@ class Notification(models.Model):
                     or self.user_left
                     or self.user_join_request
                     or self.now_public
+                    or self.user_location
+                )
+            )
+            or (
+                self.user_location
+                and (
+                    self.message
+                    or self.user_joined
+                    or self.user_left
+                    or self.user_join_request
+                    or self.now_public
+                    or self.now_private
                 )
             )
         ):
             raise ValidationError(
                 _(
-                    "Notification must be for either a new message, user leaving, user joining, join request or "
-                    "privacy change. "
+                    "Notification must be for either a new message, user leaving, user joining, join request, user "
+                    "location or privacy change. "
                 )
             )
