@@ -103,6 +103,32 @@ class ChatConsumer(AsyncWebsocketConsumer):
             },
         )
 
+    def get_user_location_bubble_for_room(self):
+        location_bubbles = self.user.locationbubble_set.filter(room=self.room).values(
+            "address", "latitude", "longitude", "hours", "minutes", "transportation"
+        )
+
+        if len(location_bubbles) > 1:
+            logger.info(
+                f"Got multiple location bubbles for user {self.user.uid} in room {self.room.id}"
+            )
+        if len(location_bubbles) > 0:
+            return location_bubbles[0]
+        return {}
+
+    async def fetch_location_bubble(self):
+        location_bubble = await database_sync_to_async(
+            self.get_user_location_bubble_for_room
+        )()
+        logger.debug(f"retrieved bubble: {location_bubble}")
+        await self.channel_layer.send(
+            self.channel_name,
+            {
+                "type": "location_bubble",
+                "location_bubble": location_bubble,
+            },
+        )
+
     def get_room_join_requests(self):
         self.room = self.get_room(self.room_group_name)
         requests = list(
@@ -375,6 +401,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     room,
                     {"type": "refresh_chat"},
                 )
+        elif input_payload.get("command") == "fetch_location_bubble":
+            await self.fetch_location_bubble()
         elif input_payload.get("command") == "update_location_bubble":
             await database_sync_to_async(self.update_location_bubble)(
                 input_payload["address"],
@@ -649,6 +677,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
         name = event["new_display_name"]
         # Send message to WebSocket
         await self.send(text_data=json.dumps({"new_display_name": name}))
+
+    async def location_bubble(self, event):
+        location_bubble = event["location_bubble"]
+        # Send message to WebSocket
+        await self.send(text_data=json.dumps({"location_bubble": location_bubble}))
 
     async def room_name(self, event):
         name = event["new_room_name"]
