@@ -32,4 +32,5 @@ services:
       - FIREBASE_CLIENT_EMAIL=
       - FIREBASE_CLIENT_ID=
       - FIREBASE_CLIENT_CERT_URL=
+      - TARGOMO_API_KEY=
       - ALLOWED_HOSTS=
