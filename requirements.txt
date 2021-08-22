@@ -63,7 +63,6 @@ service-identity==21.1.0
 shapely==1.7.1
 six==1.16.0
 sqlparse==0.4.1
-twisted-iocpsupport==1.0.1
 twisted[tls]==21.2.0
 txaio==21.2.1
 typing-extensions==3.10.0.0
