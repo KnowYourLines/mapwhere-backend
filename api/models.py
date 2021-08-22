@@ -5,6 +5,7 @@ from django.core.validators import RegexValidator
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.contrib.auth.models import AbstractUser
+from django.contrib.postgres.fields import ArrayField
 
 
 class User(AbstractUser):
@@ -69,6 +70,20 @@ class LocationBubble(models.Model):
             raise ValidationError(_("Total travel time cannot be zero."))
 
 
+class Intersection(models.Model):
+    id = models.AutoField(primary_key=True)
+    room = models.ForeignKey(Room, on_delete=models.CASCADE)
+    coordinates = ArrayField(ArrayField(ArrayField(models.FloatField(), size=2)))
+    TYPE = "Polygon"
+    TYPE_CHOICES = [
+        (TYPE, "Polygon"),
+    ]
+    type = models.CharField(
+        max_length=max([len(choice[0]) for choice in TYPE_CHOICES]),
+        choices=TYPE_CHOICES,
+    )
+
+
 class Notification(models.Model):
     id = models.AutoField(primary_key=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE)
@@ -96,7 +111,7 @@ class Notification(models.Model):
                     self.message
                     or self.user_joined
                     or self.user_left
-                    or self.user_join_request
+                    or self.join_request
                     or self.now_public
                     or self.now_private
                     or self.user_location
@@ -107,7 +122,7 @@ class Notification(models.Model):
                 and (
                     self.user_joined
                     or self.user_left
-                    or self.user_join_request
+                    or self.join_request
                     or self.now_public
                     or self.now_private
                     or self.user_location
@@ -118,7 +133,7 @@ class Notification(models.Model):
                 and (
                     self.message
                     or self.user_left
-                    or self.user_join_request
+                    or self.join_request
                     or self.now_public
                     or self.now_private
                     or self.user_location
@@ -129,14 +144,14 @@ class Notification(models.Model):
                 and (
                     self.message
                     or self.user_joined
-                    or self.user_join_request
+                    or self.join_request
                     or self.now_public
                     or self.now_private
                     or self.user_location
                 )
             )
             or (
-                self.user_join_request
+                self.join_request
                 and (
                     self.message
                     or self.user_joined
@@ -152,7 +167,7 @@ class Notification(models.Model):
                     self.message
                     or self.user_joined
                     or self.user_left
-                    or self.user_join_request
+                    or self.join_request
                     or self.now_private
                     or self.user_location
                 )
@@ -163,7 +178,7 @@ class Notification(models.Model):
                     self.message
                     or self.user_joined
                     or self.user_left
-                    or self.user_join_request
+                    or self.join_request
                     or self.now_public
                     or self.user_location
                 )
@@ -174,7 +189,7 @@ class Notification(models.Model):
                     self.message
                     or self.user_joined
                     or self.user_left
-                    or self.user_join_request
+                    or self.join_request
                     or self.now_public
                     or self.now_private
                 )

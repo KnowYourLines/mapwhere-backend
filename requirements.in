@@ -7,3 +7,6 @@ psycopg2-binary>=2.8
 dj-database-url
 django-heroku
 firebase-admin
+aiohttp
+asyncio
+shapely
