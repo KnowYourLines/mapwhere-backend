@@ -424,7 +424,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     region_isochrone["isochrone"].distance(
                         Point(location_longitude, location_latitude)
                     )
-                    < 0.2
+                    < 1e-3
                 ):
                     return region_isochrone["region"]
 
