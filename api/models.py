@@ -123,21 +123,33 @@ class Notification(models.Model):
     id = models.AutoField(primary_key=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     room = models.ForeignKey(Room, on_delete=models.CASCADE)
-    message = models.ForeignKey(Message, on_delete=models.CASCADE, null=True)
+    message = models.ForeignKey(
+        Message, on_delete=models.CASCADE, null=True, blank=True
+    )
     timestamp = models.DateTimeField(auto_now_add=True)
     read = models.BooleanField(blank=False, default=False)
     user_joined = models.ForeignKey(
-        User, related_name="joined_user", on_delete=models.CASCADE, null=True
+        User,
+        related_name="joined_user",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
     )
     user_left = models.ForeignKey(
-        User, related_name="left_user", on_delete=models.CASCADE, null=True
+        User, related_name="left_user", on_delete=models.CASCADE, null=True, blank=True
     )
     user_location = models.ForeignKey(
-        User, related_name="location_user", on_delete=models.CASCADE, null=True
+        User,
+        related_name="location_user",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
     )
-    join_request = models.ForeignKey(JoinRequest, on_delete=models.CASCADE, null=True)
-    now_private = models.BooleanField(null=True)
-    now_public = models.BooleanField(null=True)
+    join_request = models.ForeignKey(
+        JoinRequest, on_delete=models.CASCADE, null=True, blank=True
+    )
+    now_private = models.BooleanField(null=True, blank=True)
+    now_public = models.BooleanField(null=True, blank=True)
 
     def save(self, *args, **kwargs):
         self.full_clean()
