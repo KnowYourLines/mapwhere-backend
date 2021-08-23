@@ -1,4 +1,5 @@
 import os
+from operator import itemgetter
 
 import asyncio
 import json
@@ -169,8 +170,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
     def get_user_notifications(self):
         self.user.notification_set.filter(room=self.room).update(read=True)
         notifications = list(
-            self.user.notification_set.all()
-            .values(
+            self.user.notification_set.values(
                 "room",
                 "room__display_name",
                 "message__content",
@@ -184,18 +184,15 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 "now_public",
                 "now_private",
             )
-            .order_by("read", "-timestamp")
+            .order_by("room", "-timestamp")
+            .distinct("room")
         )
-        most_recent_room_notifications = []
-        rooms_covered_already = set()
+        notifications.sort(key=itemgetter("read"))
+        notifications.sort(key=itemgetter("timestamp"), reverse=True)
         for notification in notifications:
             notification["room"] = str(notification["room"])
             notification["timestamp"] = str(notification["timestamp"])
-            if notification["room"] not in rooms_covered_already:
-                most_recent_room_notifications.append(notification)
-                rooms_covered_already.add(notification["room"])
-
-        return most_recent_room_notifications
+        return notifications
 
     async def fetch_user_notifications(self):
         try:
