@@ -65,9 +65,44 @@ class LocationBubble(models.Model):
         choices=TRANSPORTATION_CHOICES,
     )
 
+    ASIA = "asia"
+    AFRICA = "africa"
+    AUSTRALIA = "australia"
+    BRITISH_ISLES = "britishisles"
+    CENTRAL_AMERICA = "central_america"
+    EASTERN_EUROPE = "easterneurope"
+    NORTH_AMERICA = "northamerica"
+    SOUTH_AMERICA = "south_america"
+    WESTERN_EUROPE = "westcentraleurope"
+    REGION_CHOICES = [
+        (ASIA, "asia"),
+        (AFRICA, "africa"),
+        (AUSTRALIA, "australia"),
+        (BRITISH_ISLES, "britishisles"),
+        (CENTRAL_AMERICA, "central_america"),
+        (EASTERN_EUROPE, "easterneurope"),
+        (NORTH_AMERICA, "northamerica"),
+        (SOUTH_AMERICA, "south_america"),
+        (WESTERN_EUROPE, "westcentraleurope"),
+    ]
+    region = models.CharField(
+        max_length=max([len(choice[0]) for choice in REGION_CHOICES]),
+        choices=REGION_CHOICES,
+        default=BRITISH_ISLES,
+    )
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
     def clean(self):
         if self.hours == 0 and self.minutes == 0:
             raise ValidationError(_("Total travel time cannot be zero."))
+        if (
+            self.region in ["africa", "central_america"]
+            and self.transportation == "transit"
+        ):
+            raise ValidationError(_(f"No transit data for {self.region}."))
 
 
 class Intersection(models.Model):
@@ -103,6 +138,10 @@ class Notification(models.Model):
     join_request = models.ForeignKey(JoinRequest, on_delete=models.CASCADE, null=True)
     now_private = models.BooleanField(null=True)
     now_public = models.BooleanField(null=True)
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
 
     def clean(self):
         if (

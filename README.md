@@ -11,15 +11,15 @@ docker-compose down --rmi all
 ```
 To run functional tests:
 ```
-docker exec -it channels_web_1 python manage.py test functional_tests
+docker exec -it mapwhere-backend_web_1 python manage.py test functional_tests
 ```
 To run unit tests:
 ```
-docker exec -it channels_web_1 python manage.py test api
+docker exec -it mapwhere-backend_web_1 python manage.py test api
 ```
 To open a terminal on the running app:
 ```
-docker exec -it channels_web_1 bash
+docker exec -it mapwhere-backend_web_1 bash
 ```
 # Deploying on Heroku
 You must have [Git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git) and the [Heroku CLI](https://devcenter.heroku.com/articles/heroku-cli#download-and-install) installed.

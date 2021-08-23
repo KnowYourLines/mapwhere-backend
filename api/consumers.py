@@ -8,7 +8,7 @@ import aiohttp as aiohttp
 from asgiref.sync import async_to_sync
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
-from shapely.geometry import Polygon, mapping
+from shapely.geometry import Polygon, mapping, Point
 
 from api.models import (
     Message,
@@ -58,8 +58,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
     def fetch_messages(self):
         try:
             messages = self.room.message_set.order_by("-timestamp")[:10]
-            logger.debug(f"messages: {messages}")
-            logger.debug(f"{self.messages_to_json(messages)}")
             for message in self.messages_to_json(messages):
                 async_to_sync(self.channel_layer.send)(
                     self.channel_name,
@@ -72,7 +70,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             pass
 
     def update_location_bubble(
-        self, address, latitude, longitude, transportation, hours, minutes
+        self, address, latitude, longitude, transportation, hours, minutes, region
     ):
         location_bubble, created = LocationBubble.objects.update_or_create(
             user=self.user,
@@ -84,12 +82,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 "transportation": transportation,
                 "hours": hours,
                 "minutes": minutes,
+                "region": region,
             },
         )
         self.update_user_location_notification()
-        logger.debug(
-            f"bubble: {location_bubble.address} {location_bubble.latitude} {location_bubble.longitude} {location_bubble.transportation} {location_bubble.hours} {location_bubble.minutes}"
-        )
         return created
 
     def update_display_name(self, new_name):
@@ -119,7 +115,13 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     def get_user_location_bubble_for_room(self):
         location_bubbles = self.user.locationbubble_set.filter(room=self.room).values(
-            "address", "latitude", "longitude", "hours", "minutes", "transportation"
+            "address",
+            "latitude",
+            "longitude",
+            "hours",
+            "minutes",
+            "transportation",
+            "region",
         )
 
         if len(location_bubbles) > 1:
@@ -134,7 +136,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
         location_bubble = await database_sync_to_async(
             self.get_user_location_bubble_for_room
         )()
-        logger.debug(f"retrieved bubble: {location_bubble}")
         await self.channel_layer.send(
             self.channel_name,
             {
@@ -155,7 +156,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def fetch_join_requests(self):
         try:
             requests = await database_sync_to_async(self.get_room_join_requests)()
-            logger.debug(f"{requests}")
             await self.channel_layer.send(
                 self.channel_name,
                 {
@@ -200,7 +200,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def fetch_user_notifications(self):
         try:
             notifications = await database_sync_to_async(self.get_user_notifications)()
-            logger.debug(f"{notifications}")
             await self.channel_layer.send(
                 self.channel_name,
                 {
@@ -225,7 +224,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     async def fetch_privacy(self):
         self.room = await database_sync_to_async(self.get_room)(self.room_group_name)
-        logger.debug(f"{self.room.id}: {self.room.private}")
         await self.channel_layer.send(
             self.channel_name,
             {
@@ -351,7 +349,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
         return room_location_bubbles
 
     def update_room_intersection(self, intersection_type, coordinates):
-        logger.debug(coordinates)
         Intersection.objects.update_or_create(
             room=self.room,
             defaults={
@@ -364,6 +361,72 @@ class ChatConsumer(AsyncWebsocketConsumer):
         async with session.post(url, json=payload) as resp:
             result = await resp.json()
             return result["data"]["features"][0]["geometry"]["coordinates"]
+
+    async def get_region_isochrone(self, session, url, payload, region):
+        async with session.post(url, json=payload) as resp:
+            result = await resp.json()
+            result = result["data"]["features"][0]["geometry"]["coordinates"]
+            return {"coordinates": result, "region": region}
+
+    async def get_isochrone_service_region(self, location_latitude, location_longitude):
+        async with aiohttp.ClientSession() as session:
+            payload = {
+                "sources": [
+                    {
+                        "lat": location_latitude,
+                        "lng": location_longitude,
+                        "id": f"region for {location_latitude}, {location_longitude}",
+                        "tm": {"walk": {}},
+                    }
+                ],
+                "polygon": {
+                    "serializer": "geojson",
+                    "srid": 4326,
+                    "values": [1],
+                },
+            }
+            service_regions = [
+                "asia",
+                "africa",
+                "australia",
+                "britishisles",
+                "central_america",
+                "easterneurope",
+                "northamerica",
+                "south_america",
+                "westcentraleurope",
+            ]
+            tasks = []
+            for region in service_regions:
+                url = f"https://service.targomo.com/{region}/v1/polygon?key={os.environ.get('TARGOMO_API_KEY')}"
+                tasks.append(
+                    asyncio.ensure_future(
+                        self.get_region_isochrone(session, url, payload, region)
+                    )
+                )
+            raw_region_isochrones = await asyncio.gather(*tasks)
+            processed_region_isochrones = []
+            for isochrone in raw_region_isochrones:
+                polygons = []
+                for polygon in isochrone["coordinates"]:
+                    coordinates = []
+                    for lng, lat in polygon[0]:
+                        coordinates.append((lng, lat))
+                    polygons.append(Polygon(coordinates))
+                processed_isochrone = polygons[0]
+                for polygon in polygons[1:]:
+                    processed_isochrone -= polygon
+                processed_region_isochrones.append(
+                    {"isochrone": processed_isochrone, "region": isochrone["region"]}
+                )
+            for region_isochrone in processed_region_isochrones:
+                if (
+                    region_isochrone["isochrone"].distance(
+                        Point(location_longitude, location_latitude)
+                    )
+                    < 0.2
+                ):
+                    return region_isochrone["region"]
 
     async def get_isochrones(self, location_bubbles):
 
@@ -390,7 +453,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                             ],
                         },
                     }
-                    url = f"https://service.targomo.com/britishisles/v1/polygon?key={os.environ.get('TARGOMO_API_KEY')}"
+                    url = f"https://service.targomo.com/{location_bubble['region']}/v1/polygon?key={os.environ.get('TARGOMO_API_KEY')}"
                     tasks.append(
                         asyncio.ensure_future(self.get_isochrone(session, url, payload))
                     )
@@ -402,7 +465,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     for polygon in isochrone:
                         coordinates = []
                         for longitude, latitude in polygon[0]:
-                            logger.debug(f"coordinate: {coordinates}")
                             coordinates.append((longitude, latitude))
                         polygons.append(Polygon(coordinates))
                     processed_isochrone = polygons[0]
@@ -491,6 +553,18 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 )
         elif input_payload.get("command") == "fetch_display_name":
             await self.fetch_display_name()
+        elif input_payload.get("command") == "get_isochrone_service_region":
+            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+            if not user_not_allowed:
+                region = await self.get_isochrone_service_region(
+                    input_payload["latitude"],
+                    input_payload["longitude"],
+                )
+                logger.debug(f"isochrone service region: {region}")
+                await self.channel_layer.send(
+                    self.channel_name,
+                    {"type": "isochrone_service_region", "region": region},
+                )
         elif input_payload.get("command") == "update_display_name":
             await database_sync_to_async(self.update_display_name)(
                 input_payload["name"]
@@ -512,32 +586,39 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     {"type": "refresh_chat"},
                 )
         elif input_payload.get("command") == "fetch_location_bubble":
-            await self.fetch_location_bubble()
+            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+            if not user_not_allowed:
+                await self.fetch_location_bubble()
         elif input_payload.get("command") == "update_location_bubble":
-            await database_sync_to_async(self.update_location_bubble)(
-                input_payload["address"],
-                input_payload["latitude"],
-                input_payload["longitude"],
-                input_payload["transportation"],
-                input_payload["hours"],
-                input_payload["minutes"],
-            )
-            rooms_to_notify = await database_sync_to_async(
-                self.get_rooms_of_all_members
-            )()
-            for room in rooms_to_notify:
-                await self.channel_layer.group_send(
-                    room,
-                    {"type": "refresh_notifications"},
+            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+            if not user_not_allowed:
+                await database_sync_to_async(self.update_location_bubble)(
+                    input_payload["address"],
+                    input_payload["latitude"],
+                    input_payload["longitude"],
+                    input_payload["transportation"],
+                    input_payload["hours"],
+                    input_payload["minutes"],
+                    input_payload["region"],
                 )
-            room_location_bubbles = await database_sync_to_async(
-                self.get_room_location_bubbles
-            )()
-            await self.get_isochrones(room_location_bubbles)
-            await self.channel_layer.group_send(
-                self.room_group_name,
-                {"type": "refresh_area"},
-            )
+                rooms_to_notify = await database_sync_to_async(
+                    self.get_rooms_of_all_members
+                )()
+                for room in rooms_to_notify:
+                    await self.channel_layer.group_send(
+                        room,
+                        {"type": "refresh_notifications"},
+                    )
+                room_location_bubbles = await database_sync_to_async(
+                    self.get_room_location_bubbles
+                )()
+                await self.get_isochrones(
+                    room_location_bubbles,
+                )
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {"type": "refresh_area"},
+                )
         elif input_payload.get("command") == "fetch_room_name":
             user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
             if not user_not_allowed:
@@ -816,6 +897,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
         notifications = event["notifications"]
         # Send message to WebSocket
         await self.send(text_data=json.dumps({"notifications": notifications}))
+
+    async def isochrone_service_region(self, event):
+        region = event["region"]
+        # Send message to WebSocket
+        await self.send(text_data=json.dumps({"region": region}))
 
     async def privacy(self, event):
         privacy = event["privacy"]
