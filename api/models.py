@@ -88,7 +88,6 @@ class LocationBubble(models.Model):
     region = models.CharField(
         max_length=max([len(choice[0]) for choice in REGION_CHOICES]),
         choices=REGION_CHOICES,
-        default=BRITISH_ISLES,
     )
 
     def save(self, *args, **kwargs):
