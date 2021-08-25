@@ -584,6 +584,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     room,
                     {"type": "refresh_chat"},
                 )
+                await self.channel_layer.group_send(
+                    room,
+                    {"type": "refresh_users_missing_locations"},
+                )
         elif input_payload.get("command") == "update_intersection":
             user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
             if not user_not_allowed:
@@ -604,6 +608,17 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 await self.channel_layer.group_send(
                     self.room_group_name,
                     {"type": "refresh_area"},
+                )
+        elif input_payload.get("command") == "fetch_users_missing_locations":
+            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+            if not user_not_allowed:
+                users = await self.find_users_missing_location_bubbles()
+                await self.channel_layer.send(
+                    self.channel_name,
+                    {
+                        "type": "users_missing_locations",
+                        "users": users,
+                    },
                 )
         elif input_payload.get("command") == "fetch_intersection":
             user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
@@ -1025,6 +1040,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def refresh_chat(self, event):
         # Send message to WebSocket
         await self.send(text_data=json.dumps({"refresh_chat": True}))
+
+    async def refresh_users_missing_locations(self, event):
+        # Send message to WebSocket
+        await self.send(text_data=json.dumps({"refresh_users_missing_locations": True}))
 
     async def refresh_room_name(self, event):
         # Send message to WebSocket
