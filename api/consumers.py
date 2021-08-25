@@ -9,7 +9,7 @@ import aiohttp as aiohttp
 from asgiref.sync import async_to_sync
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
-from shapely.geometry import Polygon, mapping, Point
+from shapely.geometry import Polygon, Point
 
 from api.models import (
     Message,
@@ -145,6 +145,44 @@ class ChatConsumer(AsyncWebsocketConsumer):
             },
         )
 
+    def get_intersection_for_room(self):
+        intersection = self.room.intersection_set.values(
+            "coordinates", "type", "centroid_lat", "centroid_lng"
+        )
+
+        if len(intersection) > 1:
+            logger.info(f"Got multiple areas for room {self.room.id}")
+        if len(intersection) > 0:
+            return intersection[0]
+        return {}
+
+    def delete_intersection_for_room(self):
+        self.room.intersection_set.all().delete()
+
+    async def fetch_area(self):
+        intersection = await database_sync_to_async(self.get_intersection_for_room)()
+        return intersection
+
+    def get_room_users_missing_location_bubbles(self):
+        rooms_users_missing_location_bubbles = list(
+            self.room.members.filter(locationbubble__isnull=True).values(
+                "username", "display_name"
+            )
+        )
+        return rooms_users_missing_location_bubbles
+
+    async def find_users_missing_location_bubbles(self):
+        users_missing_location_bubbles = await database_sync_to_async(
+            self.get_room_users_missing_location_bubbles
+        )()
+        await self.channel_layer.send(
+            self.channel_name,
+            {
+                "type": "users_missing_locations",
+                "users": users_missing_location_bubbles,
+            },
+        )
+
     def get_room_join_requests(self):
         self.room = self.get_room(self.room_group_name)
         requests = list(
@@ -187,8 +225,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
             .order_by("room", "-timestamp")
             .distinct("room")
         )
-        notifications.sort(key=itemgetter("read"))
         notifications.sort(key=itemgetter("timestamp"), reverse=True)
+        notifications.sort(key=itemgetter("read"))
         for notification in notifications:
             notification["room"] = str(notification["room"])
             notification["timestamp"] = str(notification["timestamp"])
@@ -345,19 +383,23 @@ class ChatConsumer(AsyncWebsocketConsumer):
         room_location_bubbles = list(self.room.locationbubble_set.all().values())
         return room_location_bubbles
 
-    def update_room_intersection(self, intersection_type, coordinates):
+    def update_room_intersection(
+        self, intersection_type, coordinates, centroid_lng, centroid_lat
+    ):
         Intersection.objects.update_or_create(
             room=self.room,
             defaults={
                 "type": intersection_type,
                 "coordinates": coordinates,
+                "centroid_lng": centroid_lng,
+                "centroid_lat": centroid_lat,
             },
         )
 
     async def get_isochrone(self, session, url, payload):
         async with session.post(url, json=payload) as resp:
             result = await resp.json()
-            return result["data"]["features"][0]["geometry"]["coordinates"]
+            return result["data"]["features"][0]
 
     async def get_region_isochrone(self, session, url, payload, region):
         async with session.post(url, json=payload) as resp:
@@ -410,9 +452,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     for lng, lat in polygon[0]:
                         coordinates.append((lng, lat))
                     polygons.append(Polygon(coordinates))
-                processed_isochrone = polygons[0]
-                for polygon in polygons[1:]:
-                    processed_isochrone -= polygon
+                processed_isochrone = Polygon(
+                    polygons[0].exterior.coords,
+                    [hole.exterior.coords for hole in polygons[1:]],
+                )
                 processed_region_isochrones.append(
                     {"isochrone": processed_isochrone, "region": isochrone["region"]}
                 )
@@ -454,45 +497,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     tasks.append(
                         asyncio.ensure_future(self.get_isochrone(session, url, payload))
                     )
-                raw_room_isochrones = await asyncio.gather(*tasks)
-
-                processed_room_isochrones = []
-                for isochrone in raw_room_isochrones:
-                    polygons = []
-                    for polygon in isochrone:
-                        coordinates = []
-                        for longitude, latitude in polygon[0]:
-                            coordinates.append((longitude, latitude))
-                        polygons.append(Polygon(coordinates))
-                    processed_isochrone = polygons[0]
-                    for polygon in polygons[1:]:
-                        processed_isochrone -= polygon
-                    processed_room_isochrones.append(processed_isochrone)
-
-                isochrone_intersection = processed_room_isochrones[0]
-                for isochrone in processed_room_isochrones[1:]:
-                    if isochrone_intersection.area == 0.0:
-                        break
-                    isochrone_intersection = isochrone_intersection.intersection(
-                        isochrone
-                    )
-
-                storable_isochrone_intersection = mapping(isochrone_intersection)
-                coordinates = []
-                for polygon_coordinates in storable_isochrone_intersection[
-                    "coordinates"
-                ]:
-                    polygon = []
-                    for longitude, latitude in polygon_coordinates:
-                        polygon.append([longitude, latitude])
-                    coordinates.append(polygon)
-                storable_isochrone_intersection["coordinates"] = coordinates
-
-                await database_sync_to_async(self.update_room_intersection)(
-                    storable_isochrone_intersection["type"],
-                    storable_isochrone_intersection["coordinates"],
-                )
-            return raw_room_isochrones
+                room_isochrones = await asyncio.gather(*tasks)
+                return room_isochrones
 
     # Receive message from WebSocket
     async def receive(self, text_data):
@@ -582,6 +588,38 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     room,
                     {"type": "refresh_chat"},
                 )
+        elif input_payload.get("command") == "update_intersection":
+            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+            if not user_not_allowed:
+                await database_sync_to_async(self.update_room_intersection)(
+                    input_payload["type"],
+                    input_payload["coordinates"],
+                    input_payload["centroid_lng"],
+                    input_payload["centroid_lat"],
+                )
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {"type": "refresh_area"},
+                )
+        elif input_payload.get("command") == "delete_intersection":
+            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+            if not user_not_allowed:
+                await database_sync_to_async(self.delete_intersection_for_room)()
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {"type": "refresh_area"},
+                )
+        elif input_payload.get("command") == "fetch_intersection":
+            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+            if not user_not_allowed:
+                intersection = await self.fetch_area()
+                await self.channel_layer.send(
+                    self.channel_name,
+                    {
+                        "type": "intersection",
+                        "intersection": intersection,
+                    },
+                )
         elif input_payload.get("command") == "fetch_location_bubble":
             user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
             if not user_not_allowed:
@@ -598,6 +636,20 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     input_payload["minutes"],
                     input_payload["region"],
                 )
+                room_location_bubbles = await database_sync_to_async(
+                    self.get_room_location_bubbles
+                )()
+                isochrones = await self.get_isochrones(
+                    room_location_bubbles,
+                )
+                await self.channel_layer.send(
+                    self.channel_name,
+                    {
+                        "type": "isochrones",
+                        "isochrones": isochrones,
+                    },
+                )
+                await self.find_users_missing_location_bubbles()
                 rooms_to_notify = await database_sync_to_async(
                     self.get_rooms_of_all_members
                 )()
@@ -606,16 +658,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         room,
                         {"type": "refresh_notifications"},
                     )
-                room_location_bubbles = await database_sync_to_async(
-                    self.get_room_location_bubbles
-                )()
-                await self.get_isochrones(
-                    room_location_bubbles,
-                )
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "refresh_area"},
-                )
         elif input_payload.get("command") == "fetch_room_name":
             user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
             if not user_not_allowed:
@@ -874,6 +916,21 @@ class ChatConsumer(AsyncWebsocketConsumer):
         location_bubble = event["location_bubble"]
         # Send message to WebSocket
         await self.send(text_data=json.dumps({"location_bubble": location_bubble}))
+
+    async def intersection(self, event):
+        area = event["intersection"]
+        # Send message to WebSocket
+        await self.send(text_data=json.dumps({"area": area}))
+
+    async def isochrones(self, event):
+        isochrones = event["isochrones"]
+        # Send message to WebSocket
+        await self.send(text_data=json.dumps({"isochrones": isochrones}))
+
+    async def users_missing_locations(self, event):
+        users = event["users"]
+        # Send message to WebSocket
+        await self.send(text_data=json.dumps({"users_missing_locations": users}))
 
     async def room_name(self, event):
         name = event["new_room_name"]

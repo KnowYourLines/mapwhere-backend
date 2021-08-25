@@ -5,7 +5,6 @@ from django.core.validators import RegexValidator
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.contrib.auth.models import AbstractUser
-from django.contrib.postgres.fields import ArrayField
 
 
 class User(AbstractUser):
@@ -107,15 +106,23 @@ class LocationBubble(models.Model):
 class Intersection(models.Model):
     id = models.AutoField(primary_key=True)
     room = models.ForeignKey(Room, on_delete=models.CASCADE)
-    coordinates = ArrayField(ArrayField(ArrayField(models.FloatField(), size=2)))
-    TYPE = "Polygon"
+    coordinates = models.JSONField()
+    centroid_lng = models.FloatField()
+    centroid_lat = models.FloatField()
+    POLYGON = "Polygon"
+    MULTIPOLYGON = "MultiPolygon"
     TYPE_CHOICES = [
-        (TYPE, "Polygon"),
+        (POLYGON, "Polygon"),
+        (MULTIPOLYGON, "MultiPolygon"),
     ]
     type = models.CharField(
         max_length=max([len(choice[0]) for choice in TYPE_CHOICES]),
         choices=TYPE_CHOICES,
     )
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
 
 
 class Notification(models.Model):
