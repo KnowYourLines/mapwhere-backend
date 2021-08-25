@@ -164,10 +164,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
         return intersection
 
     def get_room_users_missing_location_bubbles(self):
+        room_users_with_locations = self.room.locationbubble_set.values(
+            "user__username", "user__display_name"
+        )
+        room_users = self.room.members.all().values("username", "display_name")
         rooms_users_missing_location_bubbles = list(
-            self.room.members.filter(locationbubble__isnull=True).values(
-                "username", "display_name"
-            )
+            room_users.difference(room_users_with_locations)
         )
         return rooms_users_missing_location_bubbles
 
@@ -175,13 +177,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         users_missing_location_bubbles = await database_sync_to_async(
             self.get_room_users_missing_location_bubbles
         )()
-        await self.channel_layer.send(
-            self.channel_name,
-            {
-                "type": "users_missing_locations",
-                "users": users_missing_location_bubbles,
-            },
-        )
+        return users_missing_location_bubbles
 
     def get_room_join_requests(self):
         self.room = self.get_room(self.room_group_name)
@@ -620,6 +616,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         "intersection": intersection,
                     },
                 )
+                users = await self.find_users_missing_location_bubbles()
+                await self.channel_layer.send(
+                    self.channel_name,
+                    {
+                        "type": "users_missing_locations",
+                        "users": users,
+                    },
+                )
         elif input_payload.get("command") == "fetch_location_bubble":
             user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
             if not user_not_allowed:
@@ -649,7 +653,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         "isochrones": isochrones,
                     },
                 )
-                await self.find_users_missing_location_bubbles()
                 rooms_to_notify = await database_sync_to_async(
                     self.get_rooms_of_all_members
                 )()
@@ -703,6 +706,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     input_payload["room_id"],
                     {"type": "refresh_members"},
                 )
+                users = await self.find_users_missing_location_bubbles()
+                await self.channel_layer.group_send(
+                    input_payload["room_id"],
+                    {
+                        "type": "users_missing_locations",
+                        "users": users,
+                    },
+                )
         elif input_payload.get("command") == "approve_user":
             user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
             if not user_not_allowed:
@@ -741,6 +752,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     self.room_group_name,
                     {"type": "refresh_privacy"},
                 )
+                users = await self.find_users_missing_location_bubbles()
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {"type": "users_missing_locations", "users": users},
+                )
         elif input_payload.get("command") == "approve_all_users":
             user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
             if not user_not_allowed:
@@ -778,6 +794,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 await self.channel_layer.group_send(
                     self.room_group_name,
                     {"type": "refresh_privacy"},
+                )
+                users = await self.find_users_missing_location_bubbles()
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {
+                        "type": "users_missing_locations",
+                        "users": users,
+                    },
                 )
         elif input_payload.get("command") == "reject_user":
             user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
@@ -871,6 +895,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 await self.channel_layer.group_send(
                     self.room_group_name,
                     {"type": "refresh_members"},
+                )
+                users = await self.find_users_missing_location_bubbles()
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {
+                        "type": "users_missing_locations",
+                        "users": users,
+                    },
                 )
         else:
             user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
