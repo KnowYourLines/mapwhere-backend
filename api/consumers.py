@@ -284,7 +284,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
     def leave_room(self, room_id):
         room_to_leave = Room.objects.get(id=room_id)
         room_to_leave.members.remove(self.user)
-        self.room.locationbubble_set.filter(user=self.user).delete()
+        room_to_leave.locationbubble_set.filter(user=self.user).delete()
         for user in room_to_leave.members.all():
             Notification.objects.create(
                 user=user, room=room_to_leave, user_left=self.user
