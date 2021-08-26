@@ -395,16 +395,24 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     async def get_isochrone(self, session, url, payload):
         async with session.post(url, json=payload) as resp:
-            logger.debug(f"{payload}")
-            logger.debug(f"{await resp.text()}")
-            result = await resp.json()
-            return result["data"]["features"][0]
+            try:
+                result = await resp.json()
+                return result["data"]["features"][0]
+            except aiohttp.ContentTypeError:
+                logger.error(
+                    f"Targomo API call failed for {payload}. {await resp.text()}"
+                )
 
     async def get_region_isochrone(self, session, url, payload, region):
         async with session.post(url, json=payload) as resp:
-            result = await resp.json()
-            result = result["data"]["features"][0]["geometry"]["coordinates"]
-            return {"coordinates": result, "region": region}
+            try:
+                result = await resp.json()
+                result = result["data"]["features"][0]["geometry"]["coordinates"]
+                return {"coordinates": result, "region": region}
+            except aiohttp.ContentTypeError:
+                logger.error(
+                    f"Targomo API call failed for {payload}. {await resp.text()}"
+                )
 
     async def get_isochrone_service_region(self, location_latitude, location_longitude):
         async with aiohttp.ClientSession() as session:
@@ -458,6 +466,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 processed_region_isochrones.append(
                     {"isochrone": processed_isochrone, "region": isochrone["region"]}
                 )
+            found_region = None
             for region_isochrone in processed_region_isochrones:
                 if (
                     region_isochrone["isochrone"].distance(
@@ -465,7 +474,15 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     )
                     < 1e-3
                 ):
-                    return region_isochrone["region"]
+                    found_region = region_isochrone["region"]
+            logger.debug(f"isochrone service region: {found_region}")
+            await self.channel_layer.send(
+                self.channel_name,
+                {
+                    "type": "isochrone_service_region",
+                    "region": found_region,
+                },
+            )
 
     async def get_isochrones(self, location_bubbles):
 
@@ -564,15 +581,13 @@ class ChatConsumer(AsyncWebsocketConsumer):
         elif input_payload.get("command") == "get_isochrone_service_region":
             user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
             if not user_not_allowed:
-                region = await self.get_isochrone_service_region(
-                    input_payload["latitude"],
-                    input_payload["longitude"],
+                asyncio.create_task(
+                    self.get_isochrone_service_region(
+                        input_payload["latitude"],
+                        input_payload["longitude"],
+                    )
                 )
-                logger.debug(f"isochrone service region: {region}")
-                await self.channel_layer.send(
-                    self.channel_name,
-                    {"type": "isochrone_service_region", "region": region},
-                )
+
         elif input_payload.get("command") == "update_display_name":
             await database_sync_to_async(self.update_display_name)(
                 input_payload["name"]
