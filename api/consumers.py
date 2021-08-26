@@ -395,6 +395,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     async def get_isochrone(self, session, url, payload):
         async with session.post(url, json=payload) as resp:
+            logger.debug(f"{payload}")
+            logger.debug(f"{await resp.text()}")
             result = await resp.json()
             return result["data"]["features"][0]
 
@@ -721,14 +723,21 @@ class ChatConsumer(AsyncWebsocketConsumer):
             room_location_bubbles = await database_sync_to_async(
                 self.get_room_location_bubbles
             )()
-            isochrones = await self.get_isochrones(
-                room_location_bubbles,
+            tasks = []
+            tasks.append(
+                asyncio.ensure_future(
+                    self.get_isochrones(
+                        room_location_bubbles,
+                    )
+                )
             )
+            isochrones = await asyncio.gather(*tasks)
+
             await self.channel_layer.send(
                 self.channel_name,
                 {
                     "type": "isochrones",
-                    "isochrones": isochrones,
+                    "isochrones": isochrones[0],
                 },
             )
         elif input_payload.get("command") == "approve_user":

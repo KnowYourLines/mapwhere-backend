@@ -101,6 +101,8 @@ class LocationBubble(models.Model):
             and self.transportation == "transit"
         ):
             raise ValidationError(_(f"No transit data for {self.region}."))
+        if (self.hours * 3600) + (self.minutes * 60) > 7200:
+            raise ValidationError(_("Total travel time cannot exceed 2 hours."))
 
 
 class Intersection(models.Model):
