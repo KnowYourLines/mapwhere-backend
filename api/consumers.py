@@ -723,21 +723,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
             room_location_bubbles = await database_sync_to_async(
                 self.get_room_location_bubbles
             )()
-            tasks = []
-            tasks.append(
-                asyncio.ensure_future(
-                    self.get_isochrones(
-                        room_location_bubbles,
-                    )
-                )
+            isochrones = await self.get_isochrones(
+                room_location_bubbles,
             )
-            isochrones = await asyncio.gather(*tasks)
-
             await self.channel_layer.send(
                 self.channel_name,
                 {
                     "type": "isochrones",
-                    "isochrones": isochrones[0],
+                    "isochrones": isochrones,
                 },
             )
         elif input_payload.get("command") == "approve_user":
