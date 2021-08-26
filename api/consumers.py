@@ -497,7 +497,13 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         asyncio.ensure_future(self.get_isochrone(session, url, payload))
                     )
                 room_isochrones = await asyncio.gather(*tasks)
-                return room_isochrones
+                await self.channel_layer.send(
+                    self.channel_name,
+                    {
+                        "type": "isochrones",
+                        "isochrones": room_isochrones,
+                    },
+                )
 
     # Receive message from WebSocket
     async def receive(self, text_data):
@@ -723,16 +729,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
             room_location_bubbles = await database_sync_to_async(
                 self.get_room_location_bubbles
             )()
-            isochrones = await self.get_isochrones(
-                room_location_bubbles,
+            asyncio.create_task(
+                self.get_isochrones(
+                    room_location_bubbles,
+                )
             )
-            await self.channel_layer.send(
-                self.channel_name,
-                {
-                    "type": "isochrones",
-                    "isochrones": isochrones,
-                },
-            )
+
         elif input_payload.get("command") == "approve_user":
             user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
             if not user_not_allowed:
