@@ -284,6 +284,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
     def leave_room(self, room_id):
         room_to_leave = Room.objects.get(id=room_id)
         room_to_leave.members.remove(self.user)
+        self.room.locationbubble_set.filter(user=self.user).delete()
         for user in room_to_leave.members.all():
             Notification.objects.create(
                 user=user, room=room_to_leave, user_left=self.user
@@ -631,8 +632,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         "intersection": intersection,
                     },
                 )
-                await self.channel_layer.group_send(
-                    self.room_group_name,
+                await self.channel_layer.send(
+                    self.channel_name,
                     {"type": "refresh_users_missing_locations"},
                 )
         elif input_payload.get("command") == "fetch_location_bubble":
@@ -651,18 +652,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     input_payload["minutes"],
                     input_payload["region"],
                 )
-                room_location_bubbles = await database_sync_to_async(
-                    self.get_room_location_bubbles
-                )()
-                isochrones = await self.get_isochrones(
-                    room_location_bubbles,
-                )
-                await self.channel_layer.send(
-                    self.channel_name,
-                    {
-                        "type": "isochrones",
-                        "isochrones": isochrones,
-                    },
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {"type": "recalculate_intersection"},
                 )
                 rooms_to_notify = await database_sync_to_async(
                     self.get_rooms_of_all_members
@@ -721,6 +713,24 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     input_payload["room_id"],
                     {"type": "refresh_users_missing_locations"},
                 )
+                await self.channel_layer.group_send(
+                    input_payload["room_id"],
+                    {"type": "recalculate_intersection"},
+                )
+        elif input_payload.get("command") == "calculate_intersection":
+            room_location_bubbles = await database_sync_to_async(
+                self.get_room_location_bubbles
+            )()
+            isochrones = await self.get_isochrones(
+                room_location_bubbles,
+            )
+            await self.channel_layer.send(
+                self.channel_name,
+                {
+                    "type": "isochrones",
+                    "isochrones": isochrones,
+                },
+            )
         elif input_payload.get("command") == "approve_user":
             user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
             if not user_not_allowed:
@@ -1031,6 +1041,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def refresh_room_name(self, event):
         # Send message to WebSocket
         await self.send(text_data=json.dumps({"refresh_room_name": True}))
+
+    async def recalculate_intersection(self, event):
+        # Send message to WebSocket
+        await self.send(text_data=json.dumps({"recalculate_intersection": True}))
 
     async def refresh_allowed_status(self, event):
         # Send message to WebSocket
