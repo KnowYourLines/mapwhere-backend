@@ -1,3 +1,4 @@
+import datetime
 import os
 from operator import itemgetter
 
@@ -200,6 +201,43 @@ class ChatConsumer(AsyncWebsocketConsumer):
             )
         except JoinRequest.DoesNotExist:
             pass
+
+    def get_unobserved_notifications(self):
+        unobserved_notifications = list(
+            self.user.notification_set.filter(
+                room=self.room, timestamp__gt=self.user.last_logged_out
+            ).values("message", "user_location")
+        )
+        self.user.last_logged_out = datetime.datetime.utcnow()
+        logger.debug(f"unobserved: {unobserved_notifications}")
+        return unobserved_notifications
+
+    async def find_login_highlights(self):
+        unobserved_notifications = await database_sync_to_async(
+            self.get_unobserved_notifications
+        )()
+        if unobserved_notifications:
+            hightlight_chat = False
+            highlight_area = False
+            for notification in unobserved_notifications:
+                if notification.get("message"):
+                    hightlight_chat = True
+                if notification.get("user_location"):
+                    highlight_area = True
+            if hightlight_chat:
+                await self.channel_layer.send(
+                    self.channel_name,
+                    {
+                        "type": "highlight_chat",
+                    },
+                )
+            if highlight_area:
+                await self.channel_layer.send(
+                    self.channel_name,
+                    {
+                        "type": "highlight_area",
+                    },
+                )
 
     def get_user_notifications(self):
         self.user.notification_set.filter(room=self.room).update(read=True)
@@ -589,8 +627,15 @@ class ChatConsumer(AsyncWebsocketConsumer):
             asyncio.create_task(self.handle_privacy_update(input_payload))
         elif input_payload.get("command") == "join_room":
             asyncio.create_task(self.join_room())
+        elif input_payload.get("command") == "find_login_highlights":
+            asyncio.create_task(self.find_login_highlights())
         else:
             asyncio.create_task(self.handle_message(input_payload))
+
+    async def handle_find_login_highlights(self):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if user_not_allowed:
+            await self.find_login_highlights()
 
     async def handle_fetch_messages(self):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
@@ -1120,6 +1165,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def recalculate_intersection(self, event):
         # Send message to WebSocket
         await self.send(text_data=json.dumps({"recalculate_intersection": True}))
+
+    async def highlight_chat(self, event):
+        # Send message to WebSocket
+        await self.send(text_data=json.dumps({"highlight_chat": True}))
+
+    async def highlight_area(self, event):
+        # Send message to WebSocket
+        await self.send(text_data=json.dumps({"highlight_area": True}))
 
     async def refresh_allowed_status(self, event):
         # Send message to WebSocket
