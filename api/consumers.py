@@ -415,182 +415,328 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 )
 
     async def get_isochrone_service_region(self, location_latitude, location_longitude):
-        async with aiohttp.ClientSession() as session:
-            payload = {
-                "sources": [
-                    {
-                        "lat": location_latitude,
-                        "lng": location_longitude,
-                        "id": f"region for {location_latitude}, {location_longitude}",
-                        "tm": {"walk": {}},
-                    }
-                ],
-                "polygon": {
-                    "serializer": "geojson",
-                    "srid": 4326,
-                    "values": [1],
-                },
-            }
-            service_regions = [
-                "asia",
-                "africa",
-                "australia",
-                "britishisles",
-                "central_america",
-                "easterneurope",
-                "northamerica",
-                "south_america",
-                "westcentraleurope",
-            ]
-            tasks = []
-            for region in service_regions:
-                url = f"https://service.targomo.com/{region}/v1/polygon?key={os.environ.get('TARGOMO_API_KEY')}"
-                tasks.append(
-                    asyncio.ensure_future(
-                        self.get_region_isochrone(session, url, payload, region)
-                    )
-                )
-            raw_region_isochrones = await asyncio.gather(*tasks)
-            processed_region_isochrones = []
-            for isochrone in raw_region_isochrones:
-                polygons = []
-                for polygon in isochrone["coordinates"]:
-                    coordinates = []
-                    for lng, lat in polygon[0]:
-                        coordinates.append((lng, lat))
-                    polygons.append(Polygon(coordinates))
-                processed_isochrone = Polygon(
-                    polygons[0].exterior.coords,
-                    [hole.exterior.coords for hole in polygons[1:]],
-                )
-                processed_region_isochrones.append(
-                    {"isochrone": processed_isochrone, "region": isochrone["region"]}
-                )
-            found_region = None
-            for region_isochrone in processed_region_isochrones:
-                if (
-                    region_isochrone["isochrone"].distance(
-                        Point(location_longitude, location_latitude)
-                    )
-                    < 1e-3
-                ):
-                    found_region = region_isochrone["region"]
-            logger.debug(f"isochrone service region: {found_region}")
-            await self.channel_layer.send(
-                self.channel_name,
-                {
-                    "type": "isochrone_service_region",
-                    "region": found_region,
-                },
-            )
-
-    async def get_isochrones(self, location_bubbles):
-
-        async with aiohttp.ClientSession() as session:
-
-            if location_bubbles:
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            async with aiohttp.ClientSession() as session:
+                payload = {
+                    "sources": [
+                        {
+                            "lat": location_latitude,
+                            "lng": location_longitude,
+                            "id": f"region for {location_latitude}, {location_longitude}",
+                            "tm": {"walk": {}},
+                        }
+                    ],
+                    "polygon": {
+                        "serializer": "geojson",
+                        "srid": 4326,
+                        "values": [1],
+                    },
+                }
+                service_regions = [
+                    "asia",
+                    "africa",
+                    "australia",
+                    "britishisles",
+                    "central_america",
+                    "easterneurope",
+                    "northamerica",
+                    "south_america",
+                    "westcentraleurope",
+                ]
                 tasks = []
-                for location_bubble in location_bubbles:
-                    payload = {
-                        "sources": [
-                            {
-                                "lat": location_bubble["latitude"],
-                                "lng": location_bubble["longitude"],
-                                "id": f"{location_bubble['id']}",
-                                "tm": {location_bubble["transportation"]: {}},
-                            }
-                        ],
-                        "polygon": {
-                            "serializer": "geojson",
-                            "srid": 4326,
-                            "values": [
-                                (location_bubble["hours"] * 3600)
-                                + (location_bubble["minutes"] * 60)
-                            ],
-                        },
-                    }
-                    url = f"https://service.targomo.com/{location_bubble['region']}/v1/polygon?key={os.environ.get('TARGOMO_API_KEY')}"
+                for region in service_regions:
+                    url = f"https://service.targomo.com/{region}/v1/polygon?key={os.environ.get('TARGOMO_API_KEY')}"
                     tasks.append(
-                        asyncio.ensure_future(self.get_isochrone(session, url, payload))
+                        asyncio.ensure_future(
+                            self.get_region_isochrone(session, url, payload, region)
+                        )
                     )
-                room_isochrones = await asyncio.gather(*tasks)
+                raw_region_isochrones = await asyncio.gather(*tasks)
+                processed_region_isochrones = []
+                for isochrone in raw_region_isochrones:
+                    polygons = []
+                    for polygon in isochrone["coordinates"]:
+                        coordinates = []
+                        for lng, lat in polygon[0]:
+                            coordinates.append((lng, lat))
+                        polygons.append(Polygon(coordinates))
+                    processed_isochrone = Polygon(
+                        polygons[0].exterior.coords,
+                        [hole.exterior.coords for hole in polygons[1:]],
+                    )
+                    processed_region_isochrones.append(
+                        {
+                            "isochrone": processed_isochrone,
+                            "region": isochrone["region"],
+                        }
+                    )
+                found_region = None
+                for region_isochrone in processed_region_isochrones:
+                    if (
+                        region_isochrone["isochrone"].distance(
+                            Point(location_longitude, location_latitude)
+                        )
+                        < 1e-3
+                    ):
+                        found_region = region_isochrone["region"]
+                logger.debug(f"isochrone service region: {found_region}")
                 await self.channel_layer.send(
                     self.channel_name,
                     {
-                        "type": "isochrones",
-                        "isochrones": room_isochrones,
+                        "type": "isochrone_service_region",
+                        "region": found_region,
                     },
                 )
+
+    async def get_isochrones(self):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            async with aiohttp.ClientSession() as session:
+                location_bubbles = await database_sync_to_async(
+                    self.get_room_location_bubbles
+                )()
+
+                if location_bubbles:
+                    tasks = []
+                    for location_bubble in location_bubbles:
+                        payload = {
+                            "sources": [
+                                {
+                                    "lat": location_bubble["latitude"],
+                                    "lng": location_bubble["longitude"],
+                                    "id": f"{location_bubble['id']}",
+                                    "tm": {location_bubble["transportation"]: {}},
+                                }
+                            ],
+                            "polygon": {
+                                "serializer": "geojson",
+                                "srid": 4326,
+                                "values": [
+                                    (location_bubble["hours"] * 3600)
+                                    + (location_bubble["minutes"] * 60)
+                                ],
+                            },
+                        }
+                        url = f"https://service.targomo.com/{location_bubble['region']}/v1/polygon?key={os.environ.get('TARGOMO_API_KEY')}"
+                        tasks.append(
+                            asyncio.ensure_future(
+                                self.get_isochrone(session, url, payload)
+                            )
+                        )
+                    room_isochrones = await asyncio.gather(*tasks)
+                    await self.channel_layer.send(
+                        self.channel_name,
+                        {
+                            "type": "isochrones",
+                            "isochrones": room_isochrones,
+                        },
+                    )
 
     # Receive message from WebSocket
     async def receive(self, text_data):
         input_payload = json.loads(text_data)
         if input_payload.get("command") == "fetch_messages":
-            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
-            if user_not_allowed:
-                created = await database_sync_to_async(
-                    self.get_or_create_new_join_request
-                )()
-                if created:
-                    rooms_to_notify = await database_sync_to_async(
-                        self.get_rooms_of_all_members
-                    )()
-                    for room in rooms_to_notify:
-                        await self.channel_layer.group_send(
-                            room,
-                            {
-                                "type": "refresh_notifications",
-                            },
-                        )
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "refresh_join_requests"},
-                )
-                await self.channel_layer.send(
-                    self.channel_name,
-                    {
-                        "type": "not_allowed",
-                    },
-                )
-            else:
-                await self.channel_layer.send(
-                    self.channel_name,
-                    {
-                        "type": "allowed",
-                    },
-                )
-                await database_sync_to_async(self.fetch_messages)()
+            asyncio.create_task(self.handle_fetch_messages())
         elif input_payload.get("command") == "fetch_allowed_status":
-            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
-            if user_not_allowed:
-                await self.channel_layer.send(
-                    self.channel_name,
-                    {
-                        "type": "not_allowed",
-                    },
-                )
-            else:
-                await self.channel_layer.send(
-                    self.channel_name,
-                    {
-                        "type": "allowed",
-                    },
-                )
+            asyncio.create_task(self.fetch_allowed_status())
         elif input_payload.get("command") == "fetch_display_name":
-            await self.fetch_display_name()
+            asyncio.create_task(self.fetch_display_name())
         elif input_payload.get("command") == "get_isochrone_service_region":
-            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
-            if not user_not_allowed:
-                asyncio.create_task(
-                    self.get_isochrone_service_region(
-                        input_payload["latitude"],
-                        input_payload["longitude"],
-                    )
+            asyncio.create_task(
+                self.get_isochrone_service_region(
+                    input_payload["latitude"],
+                    input_payload["longitude"],
                 )
-
+            )
         elif input_payload.get("command") == "update_display_name":
-            await database_sync_to_async(self.update_display_name)(
-                input_payload["name"]
+            asyncio.create_task(self.handle_update_display_name(input_payload))
+        elif input_payload.get("command") == "update_intersection":
+            asyncio.create_task(self.handle_update_intersection(input_payload))
+        elif input_payload.get("command") == "delete_intersection":
+            asyncio.create_task(self.handle_delete_intersection())
+        elif input_payload.get("command") == "fetch_users_missing_locations":
+            asyncio.create_task(self.handle_fetch_users_missing_locations())
+        elif input_payload.get("command") == "fetch_intersection":
+            asyncio.create_task(self.handle_fetch_intersection())
+        elif input_payload.get("command") == "fetch_location_bubble":
+            asyncio.create_task(self.handle_fetch_location_bubble())
+        elif input_payload.get("command") == "update_location_bubble":
+            asyncio.create_task(self.handle_update_location_bubble(input_payload))
+        elif input_payload.get("command") == "fetch_room_name":
+            asyncio.create_task(self.handle_fetch_room_name())
+        elif input_payload.get("command") == "fetch_members":
+            asyncio.create_task(self.handle_fetch_members())
+        elif input_payload.get("command") == "update_room_name":
+            asyncio.create_task(self.handle_update_room_name(input_payload))
+        elif input_payload.get("command") == "exit_room":
+            asyncio.create_task(self.exit_room(input_payload))
+        elif input_payload.get("command") == "calculate_intersection":
+            asyncio.create_task(self.get_isochrones())
+        elif input_payload.get("command") == "approve_user":
+            asyncio.create_task(self.handle_approve_user(input_payload))
+        elif input_payload.get("command") == "approve_all_users":
+            asyncio.create_task(self.handle_approve_all_users())
+        elif input_payload.get("command") == "reject_user":
+            asyncio.create_task(self.handle_reject_user(input_payload))
+        elif input_payload.get("command") == "fetch_join_requests":
+            asyncio.create_task(self.fetch_join_requests())
+        elif input_payload.get("command") == "fetch_user_notifications":
+            asyncio.create_task(self.fetch_user_notifications())
+        elif input_payload.get("command") == "fetch_privacy":
+            asyncio.create_task(self.handle_fetch_privacy())
+        elif input_payload.get("command") == "update_privacy":
+            asyncio.create_task(self.handle_privacy_update(input_payload))
+        elif input_payload.get("command") == "join_room":
+            asyncio.create_task(self.join_room())
+        else:
+            asyncio.create_task(self.handle_message(input_payload))
+
+    async def handle_fetch_messages(self):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if user_not_allowed:
+            created = await database_sync_to_async(
+                self.get_or_create_new_join_request
+            )()
+            if created:
+                rooms_to_notify = await database_sync_to_async(
+                    self.get_rooms_of_all_members
+                )()
+                for room in rooms_to_notify:
+                    await self.channel_layer.group_send(
+                        room,
+                        {
+                            "type": "refresh_notifications",
+                        },
+                    )
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_join_requests"},
+            )
+            await self.channel_layer.send(
+                self.channel_name,
+                {
+                    "type": "not_allowed",
+                },
+            )
+        else:
+            await self.channel_layer.send(
+                self.channel_name,
+                {
+                    "type": "allowed",
+                },
+            )
+            await database_sync_to_async(self.fetch_messages)()
+
+    async def handle_fetch_allowed_status(self):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if user_not_allowed:
+            await self.channel_layer.send(
+                self.channel_name,
+                {
+                    "type": "not_allowed",
+                },
+            )
+        else:
+            await self.channel_layer.send(
+                self.channel_name,
+                {
+                    "type": "allowed",
+                },
+            )
+
+    async def handle_update_display_name(self, input_payload):
+        await database_sync_to_async(self.update_display_name)(input_payload["name"])
+        rooms_to_notify = await database_sync_to_async(self.get_rooms_of_all_members)()
+        for room in rooms_to_notify:
+            await self.channel_layer.group_send(
+                room,
+                {"type": "refresh_notifications"},
+            )
+            await self.channel_layer.group_send(
+                room,
+                {"type": "refresh_members"},
+            )
+            await self.channel_layer.group_send(
+                room,
+                {"type": "refresh_chat"},
+            )
+            await self.channel_layer.group_send(
+                room,
+                {"type": "refresh_users_missing_locations"},
+            )
+
+    async def handle_update_intersection(self, input_payload):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            await database_sync_to_async(self.update_room_intersection)(
+                input_payload["type"],
+                input_payload["coordinates"],
+                input_payload["centroid_lng"],
+                input_payload["centroid_lat"],
+            )
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_area"},
+            )
+
+    async def handle_delete_intersection(self):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            await database_sync_to_async(self.delete_intersection_for_room)()
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_area"},
+            )
+
+    async def handle_fetch_users_missing_locations(self):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            users = await self.find_users_missing_location_bubbles()
+            await self.channel_layer.send(
+                self.channel_name,
+                {
+                    "type": "users_missing_locations",
+                    "users": users,
+                },
+            )
+
+    async def handle_fetch_intersection(self):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            intersection = await self.fetch_area()
+            await self.channel_layer.send(
+                self.channel_name,
+                {
+                    "type": "intersection",
+                    "intersection": intersection,
+                },
+            )
+            await self.channel_layer.send(
+                self.channel_name,
+                {"type": "refresh_users_missing_locations"},
+            )
+
+    async def handle_fetch_location_bubble(self):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            await self.fetch_location_bubble()
+
+    async def handle_update_location_bubble(self, input_payload):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            await database_sync_to_async(self.update_location_bubble)(
+                input_payload["address"],
+                input_payload["latitude"],
+                input_payload["longitude"],
+                input_payload["transportation"],
+                input_payload["hours"],
+                input_payload["minutes"],
+                input_payload["region"],
+            )
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "recalculate_intersection"},
             )
             rooms_to_notify = await database_sync_to_async(
                 self.get_rooms_of_all_members
@@ -600,319 +746,200 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     room,
                     {"type": "refresh_notifications"},
                 )
-                await self.channel_layer.group_send(
-                    room,
-                    {"type": "refresh_members"},
-                )
-                await self.channel_layer.group_send(
-                    room,
-                    {"type": "refresh_chat"},
-                )
-                await self.channel_layer.group_send(
-                    room,
-                    {"type": "refresh_users_missing_locations"},
-                )
-        elif input_payload.get("command") == "update_intersection":
-            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
-            if not user_not_allowed:
-                await database_sync_to_async(self.update_room_intersection)(
-                    input_payload["type"],
-                    input_payload["coordinates"],
-                    input_payload["centroid_lng"],
-                    input_payload["centroid_lat"],
-                )
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "refresh_area"},
-                )
-        elif input_payload.get("command") == "delete_intersection":
-            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
-            if not user_not_allowed:
-                await database_sync_to_async(self.delete_intersection_for_room)()
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "refresh_area"},
-                )
-        elif input_payload.get("command") == "fetch_users_missing_locations":
-            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
-            if not user_not_allowed:
-                users = await self.find_users_missing_location_bubbles()
-                await self.channel_layer.send(
-                    self.channel_name,
-                    {
-                        "type": "users_missing_locations",
-                        "users": users,
-                    },
-                )
-        elif input_payload.get("command") == "fetch_intersection":
-            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
-            if not user_not_allowed:
-                intersection = await self.fetch_area()
-                await self.channel_layer.send(
-                    self.channel_name,
-                    {
-                        "type": "intersection",
-                        "intersection": intersection,
-                    },
-                )
-                await self.channel_layer.send(
-                    self.channel_name,
-                    {"type": "refresh_users_missing_locations"},
-                )
-        elif input_payload.get("command") == "fetch_location_bubble":
-            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
-            if not user_not_allowed:
-                await self.fetch_location_bubble()
-        elif input_payload.get("command") == "update_location_bubble":
-            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
-            if not user_not_allowed:
-                await database_sync_to_async(self.update_location_bubble)(
-                    input_payload["address"],
-                    input_payload["latitude"],
-                    input_payload["longitude"],
-                    input_payload["transportation"],
-                    input_payload["hours"],
-                    input_payload["minutes"],
-                    input_payload["region"],
-                )
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "recalculate_intersection"},
-                )
-                rooms_to_notify = await database_sync_to_async(
-                    self.get_rooms_of_all_members
-                )()
-                for room in rooms_to_notify:
-                    await self.channel_layer.group_send(
-                        room,
-                        {"type": "refresh_notifications"},
-                    )
-        elif input_payload.get("command") == "fetch_room_name":
-            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
-            if not user_not_allowed:
-                await self.fetch_room_name()
-        elif input_payload.get("command") == "fetch_members":
-            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
-            if not user_not_allowed:
-                await self.fetch_room_members()
-        elif input_payload.get("command") == "update_room_name":
-            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
-            if not user_not_allowed:
-                await database_sync_to_async(self.update_room_name)(
-                    input_payload["name"]
-                )
-                rooms_to_notify = await database_sync_to_async(
-                    self.get_rooms_of_all_members
-                )()
-                for room in rooms_to_notify:
-                    await self.channel_layer.group_send(
-                        room,
-                        {"type": "refresh_notifications"},
-                    )
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "refresh_room_name"},
-                )
-        elif input_payload.get("command") == "exit_room":
-            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
-            if not user_not_allowed:
-                rooms_to_notify = await database_sync_to_async(
-                    self.get_rooms_of_all_members
-                )()
-                await database_sync_to_async(self.leave_room)(input_payload["room_id"])
 
-                for room in rooms_to_notify:
-                    await self.channel_layer.group_send(
-                        room,
-                        {
-                            "type": "refresh_notifications",
-                        },
-                    )
-                await self.channel_layer.group_send(
-                    input_payload["room_id"],
-                    {"type": "refresh_members"},
-                )
-                await self.channel_layer.group_send(
-                    input_payload["room_id"],
-                    {"type": "refresh_users_missing_locations"},
-                )
-                await self.channel_layer.group_send(
-                    input_payload["room_id"],
-                    {"type": "recalculate_intersection"},
-                )
-        elif input_payload.get("command") == "calculate_intersection":
-            room_location_bubbles = await database_sync_to_async(
-                self.get_room_location_bubbles
+    async def handle_fetch_room_name(self):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            await self.fetch_room_name()
+
+    async def handle_fetch_members(self):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            await self.fetch_room_members()
+
+    async def handle_update_room_name(self, input_payload):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            await database_sync_to_async(self.update_room_name)(input_payload["name"])
+            rooms_to_notify = await database_sync_to_async(
+                self.get_rooms_of_all_members
             )()
-            asyncio.create_task(
-                self.get_isochrones(
-                    room_location_bubbles,
+            for room in rooms_to_notify:
+                await self.channel_layer.group_send(
+                    room,
+                    {"type": "refresh_notifications"},
                 )
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_room_name"},
             )
 
-        elif input_payload.get("command") == "approve_user":
-            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
-            if not user_not_allowed:
-                await database_sync_to_async(self.approve_room_member)(
-                    input_payload["username"]
-                )
-                rooms_to_notify = await database_sync_to_async(
-                    self.get_rooms_of_all_members
-                )()
-                for room in rooms_to_notify:
-                    await self.channel_layer.group_send(
-                        room,
-                        {"type": "refresh_notifications"},
-                    )
+    async def exit_room(self, input_payload):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            rooms_to_notify = await database_sync_to_async(
+                self.get_rooms_of_all_members
+            )()
+            await database_sync_to_async(self.leave_room)(input_payload["room_id"])
+
+            for room in rooms_to_notify:
                 await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "refresh_join_requests"},
-                )
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "refresh_members"},
-                )
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "refresh_allowed_status"},
-                )
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "refresh_chat"},
-                )
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "refresh_room_name"},
-                )
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "refresh_privacy"},
-                )
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "refresh_users_missing_locations"},
-                )
-        elif input_payload.get("command") == "approve_all_users":
-            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
-            if not user_not_allowed:
-                await database_sync_to_async(self.approve_all_room_members)()
-                rooms_to_notify = await database_sync_to_async(
-                    self.get_rooms_of_all_members
-                )()
-                for room in rooms_to_notify:
-                    await self.channel_layer.group_send(
-                        room,
-                        {
-                            "type": "refresh_notifications",
-                        },
-                    )
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "refresh_join_requests"},
-                )
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "refresh_members"},
-                )
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "refresh_allowed_status"},
-                )
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "refresh_chat"},
-                )
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "refresh_room_name"},
-                )
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "refresh_privacy"},
-                )
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "refresh_users_missing_locations"},
-                )
-        elif input_payload.get("command") == "reject_user":
-            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
-            if not user_not_allowed:
-                await database_sync_to_async(self.reject_room_member)(
-                    input_payload["username"]
-                )
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "refresh_join_requests"},
-                )
-        elif input_payload.get("command") == "fetch_join_requests":
-            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
-            if not user_not_allowed:
-                await self.fetch_join_requests()
-        elif input_payload.get("command") == "fetch_user_notifications":
-            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
-            if not user_not_allowed:
-                await self.fetch_user_notifications()
-        elif input_payload.get("command") == "fetch_privacy":
-            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
-            if not user_not_allowed:
-                await self.fetch_privacy()
-        elif input_payload.get("command") == "update_privacy":
-            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
-            if not user_not_allowed:
-                await database_sync_to_async(self.update_privacy)(
-                    input_payload["privacy"]
-                )
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "refresh_privacy"},
-                )
-                rooms_to_notify = await database_sync_to_async(
-                    self.get_rooms_of_all_members
-                )()
-                for room in rooms_to_notify:
-                    await self.channel_layer.group_send(
-                        room,
-                        {
-                            "type": "refresh_notifications",
-                        },
-                    )
-        elif input_payload.get("command") == "join_room":
-            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
-            if user_not_allowed:
-                created = await database_sync_to_async(
-                    self.get_or_create_new_join_request
-                )()
-                if created:
-                    rooms_to_notify = await database_sync_to_async(
-                        self.get_rooms_of_all_members
-                    )()
-                    for room in rooms_to_notify:
-                        await self.channel_layer.group_send(
-                            room,
-                            {
-                                "type": "refresh_notifications",
-                            },
-                        )
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "refresh_join_requests"},
-                )
-                await self.channel_layer.send(
-                    self.channel_name,
+                    room,
                     {
-                        "type": "not_allowed",
+                        "type": "refresh_notifications",
                     },
                 )
-            else:
-                await self.channel_layer.send(
-                    self.channel_name,
+            await self.channel_layer.group_send(
+                input_payload["room_id"],
+                {"type": "refresh_members"},
+            )
+            await self.channel_layer.group_send(
+                input_payload["room_id"],
+                {"type": "refresh_users_missing_locations"},
+            )
+            await self.channel_layer.group_send(
+                input_payload["room_id"],
+                {"type": "recalculate_intersection"},
+            )
+
+    async def handle_approve_user(self, input_payload):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            await database_sync_to_async(self.approve_room_member)(
+                input_payload["username"]
+            )
+            rooms_to_notify = await database_sync_to_async(
+                self.get_rooms_of_all_members
+            )()
+            for room in rooms_to_notify:
+                await self.channel_layer.group_send(
+                    room,
+                    {"type": "refresh_notifications"},
+                )
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_join_requests"},
+            )
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_members"},
+            )
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_allowed_status"},
+            )
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_chat"},
+            )
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_room_name"},
+            )
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_privacy"},
+            )
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_users_missing_locations"},
+            )
+
+    async def handle_approve_all_users(self):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            await database_sync_to_async(self.approve_all_room_members)()
+            rooms_to_notify = await database_sync_to_async(
+                self.get_rooms_of_all_members
+            )()
+            for room in rooms_to_notify:
+                await self.channel_layer.group_send(
+                    room,
                     {
-                        "type": "allowed",
+                        "type": "refresh_notifications",
                     },
                 )
-                await database_sync_to_async(self.update_room_members)(
-                    self.room, self.user
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_join_requests"},
+            )
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_members"},
+            )
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_allowed_status"},
+            )
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_chat"},
+            )
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_room_name"},
+            )
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_privacy"},
+            )
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_users_missing_locations"},
+            )
+
+    async def handle_reject_user(self, input_payload):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            await database_sync_to_async(self.reject_room_member)(
+                input_payload["username"]
+            )
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_join_requests"},
+            )
+
+    async def handle_fetch_join_requests(self):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            await self.fetch_join_requests()
+
+    async def handle_fetch_user_notifications(self):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            await self.fetch_user_notifications()
+
+    async def handle_fetch_privacy(self):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            await self.fetch_privacy()
+
+    async def handle_privacy_update(self, input_payload):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            await database_sync_to_async(self.update_privacy)(input_payload["privacy"])
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_privacy"},
+            )
+            rooms_to_notify = await database_sync_to_async(
+                self.get_rooms_of_all_members
+            )()
+            for room in rooms_to_notify:
+                await self.channel_layer.group_send(
+                    room,
+                    {
+                        "type": "refresh_notifications",
+                    },
                 )
+
+    async def join_room(self):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if user_not_allowed:
+            created = await database_sync_to_async(
+                self.get_or_create_new_join_request
+            )()
+            if created:
                 rooms_to_notify = await database_sync_to_async(
                     self.get_rooms_of_all_members
                 )()
@@ -923,35 +950,64 @@ class ChatConsumer(AsyncWebsocketConsumer):
                             "type": "refresh_notifications",
                         },
                     )
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "refresh_members"},
-                )
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "refresh_users_missing_locations"},
-                )
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_join_requests"},
+            )
+            await self.channel_layer.send(
+                self.channel_name,
+                {
+                    "type": "not_allowed",
+                },
+            )
         else:
-            user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
-            if not user_not_allowed:
-                message = input_payload["message"]
-                display_name = input_payload["user"]
-                await database_sync_to_async(self.create_new_message)(message)
-                rooms_to_notify = await database_sync_to_async(
-                    self.get_rooms_of_all_members
-                )()
-                for room in rooms_to_notify:
-                    await self.channel_layer.group_send(
-                        room,
-                        {
-                            "type": "refresh_notifications",
-                        },
-                    )
-                # Send message to room group
+            await self.channel_layer.send(
+                self.channel_name,
+                {
+                    "type": "allowed",
+                },
+            )
+            await database_sync_to_async(self.update_room_members)(self.room, self.user)
+            rooms_to_notify = await database_sync_to_async(
+                self.get_rooms_of_all_members
+            )()
+            for room in rooms_to_notify:
                 await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "chat_message", "message": f"{display_name}: {message}"},
+                    room,
+                    {
+                        "type": "refresh_notifications",
+                    },
                 )
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_members"},
+            )
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_users_missing_locations"},
+            )
+
+    async def handle_message(self, input_payload):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            message = input_payload["message"]
+            display_name = input_payload["user"]
+            await database_sync_to_async(self.create_new_message)(message)
+            rooms_to_notify = await database_sync_to_async(
+                self.get_rooms_of_all_members
+            )()
+            for room in rooms_to_notify:
+                await self.channel_layer.group_send(
+                    room,
+                    {
+                        "type": "refresh_notifications",
+                    },
+                )
+            # Send message to room group
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "chat_message", "message": f"{display_name}: {message}"},
+            )
 
     # Receive message from room group
     async def chat_message(self, event):
