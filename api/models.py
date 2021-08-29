@@ -15,7 +15,7 @@ class User(AbstractUser):
     )
     phone_number = models.CharField(validators=[phone_regex], max_length=17, blank=True)
     display_name = models.CharField(max_length=150, blank=True)
-    last_logged_out = models.DateTimeField(auto_now_add=True)
+    last_logged_in = models.DateTimeField(auto_now_add=True)
 
 
 class Room(models.Model):

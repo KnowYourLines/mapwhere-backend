@@ -42,10 +42,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
             "timestamp": str(message.timestamp),
         }
 
+    def update_user_last_logged_in_timestamp(self):
+        self.user.last_logged_in = datetime.datetime.utcnow()
+
     async def connect(self):
         self.room_group_name = self.scope["url_route"]["kwargs"]["room_name"]
         self.room = await database_sync_to_async(self.get_room)(self.room_group_name)
         self.user = self.scope["user"]
+        await database_sync_to_async(self.update_user_last_logged_in_timestamp)()
 
         # Join room group
         await self.channel_layer.group_add(str(self.room.id), self.channel_name)
@@ -201,42 +205,15 @@ class ChatConsumer(AsyncWebsocketConsumer):
         except JoinRequest.DoesNotExist:
             pass
 
-    def get_unobserved_notifications(self):
+    def get_user_unread_notifications_for_room(self):
+
         unobserved_notifications = list(
             self.user.notification_set.filter(
-                room=self.room, timestamp__gt=self.user.last_logged_out
+                room=self.room, timestamp__lte=self.user.last_logged_in, read=False
             ).values("message", "user_location")
         )
-        self.user.last_logged_out = datetime.datetime.utcnow()
         logger.debug(f"unobserved: {unobserved_notifications}")
         return unobserved_notifications
-
-    async def find_login_highlights(self):
-        unobserved_notifications = await database_sync_to_async(
-            self.get_unobserved_notifications
-        )()
-        if unobserved_notifications:
-            hightlight_chat = False
-            highlight_area = False
-            for notification in unobserved_notifications:
-                if notification.get("message"):
-                    hightlight_chat = True
-                if notification.get("user_location"):
-                    highlight_area = True
-            if hightlight_chat:
-                await self.channel_layer.send(
-                    self.channel_name,
-                    {
-                        "type": "highlight_chat",
-                    },
-                )
-            if highlight_area:
-                await self.channel_layer.send(
-                    self.channel_name,
-                    {
-                        "type": "highlight_area",
-                    },
-                )
 
     def get_user_notifications(self):
         self.user.notification_set.filter(room=self.room).update(read=True)
@@ -267,6 +244,31 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     async def fetch_user_notifications(self):
         try:
+            unobserved_notifications = await database_sync_to_async(
+                self.get_user_unread_notifications_for_room
+            )()
+            if unobserved_notifications:
+                hightlight_chat = False
+                highlight_area = False
+                for notification in unobserved_notifications:
+                    if notification.get("message"):
+                        hightlight_chat = True
+                    if notification.get("user_location"):
+                        highlight_area = True
+                if hightlight_chat:
+                    await self.channel_layer.send(
+                        self.channel_name,
+                        {
+                            "type": "highlight_chat",
+                        },
+                    )
+                if highlight_area:
+                    await self.channel_layer.send(
+                        self.channel_name,
+                        {
+                            "type": "highlight_area",
+                        },
+                    )
             notifications = await database_sync_to_async(self.get_user_notifications)()
             await self.channel_layer.send(
                 self.channel_name,
@@ -635,15 +637,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
             asyncio.create_task(self.handle_privacy_update(input_payload))
         elif input_payload.get("command") == "join_room":
             asyncio.create_task(self.join_room())
-        elif input_payload.get("command") == "find_login_highlights":
-            asyncio.create_task(self.find_login_highlights())
         else:
             asyncio.create_task(self.handle_message(input_payload))
-
-    async def handle_find_login_highlights(self):
-        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
-        if user_not_allowed:
-            await self.find_login_highlights()
 
     async def handle_fetch_messages(self):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
