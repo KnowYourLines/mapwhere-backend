@@ -10,7 +10,6 @@ import aiohttp as aiohttp
 from asgiref.sync import async_to_sync
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
-from shapely.geometry import Polygon, Point
 
 from api.models import (
     Message,
@@ -445,8 +444,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
         async with session.post(url, json=payload) as resp:
             try:
                 result = await resp.json()
-                result = result["data"]["features"][0]["geometry"]["coordinates"]
-                return {"coordinates": result, "region": region}
+                result = result["data"]["features"][0]
+                return {
+                    "isochrone": result,
+                    "region": region,
+                    "travel_mode": list(payload["sources"][0]["tm"])[0],
+                }
             except aiohttp.ContentTypeError:
                 logger.error(
                     f"Targomo API call failed for {payload}. {await resp.text()}"
@@ -456,7 +459,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
             async with aiohttp.ClientSession() as session:
-                payload = {
+                travel_time_in_seconds = 180
+                walk_payload = {
                     "sources": [
                         {
                             "lat": location_latitude,
@@ -468,18 +472,33 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     "polygon": {
                         "serializer": "geojson",
                         "srid": 4326,
-                        "values": [1],
+                        "values": [travel_time_in_seconds],
+                    },
+                }
+                transit_payload = {
+                    "sources": [
+                        {
+                            "lat": location_latitude,
+                            "lng": location_longitude,
+                            "id": f"region for {location_latitude}, {location_longitude}",
+                            "tm": {"transit": {}},
+                        }
+                    ],
+                    "polygon": {
+                        "serializer": "geojson",
+                        "srid": 4326,
+                        "values": [travel_time_in_seconds],
                     },
                 }
                 service_regions = [
-                    "asia",
                     "africa",
+                    "central_america",
+                    "south_america",
                     "australia",
                     "britishisles",
-                    "central_america",
+                    "asia",
                     "easterneurope",
                     "northamerica",
-                    "south_america",
                     "westcentraleurope",
                 ]
                 tasks = []
@@ -487,43 +506,32 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     url = f"https://service.targomo.com/{region}/v1/polygon?key={os.environ.get('TARGOMO_API_KEY')}"
                     tasks.append(
                         asyncio.ensure_future(
-                            self.get_region_isochrone(session, url, payload, region)
+                            self.get_region_isochrone(
+                                session,
+                                url,
+                                walk_payload,
+                                region,
+                            )
                         )
                     )
-                raw_region_isochrones = await asyncio.gather(*tasks)
-                processed_region_isochrones = []
-                for isochrone in raw_region_isochrones:
-                    polygons = []
-                    for polygon in isochrone["coordinates"]:
-                        coordinates = []
-                        for lng, lat in polygon[0]:
-                            coordinates.append((lng, lat))
-                        polygons.append(Polygon(coordinates))
-                    processed_isochrone = Polygon(
-                        polygons[0].exterior.coords,
-                        [hole.exterior.coords for hole in polygons[1:]],
-                    )
-                    processed_region_isochrones.append(
-                        {
-                            "isochrone": processed_isochrone,
-                            "region": isochrone["region"],
-                        }
-                    )
-                found_region = None
-                for region_isochrone in processed_region_isochrones:
-                    if (
-                        region_isochrone["isochrone"].distance(
-                            Point(location_longitude, location_latitude)
+                    tasks.append(
+                        asyncio.ensure_future(
+                            self.get_region_isochrone(
+                                session,
+                                url,
+                                transit_payload,
+                                region,
+                            )
                         )
-                        < 1e-3
-                    ):
-                        found_region = region_isochrone["region"]
-                logger.debug(f"isochrone service region: {found_region}")
+                    )
+                region_isochrones = await asyncio.gather(*tasks)
                 await self.channel_layer.send(
                     self.channel_name,
                     {
-                        "type": "isochrone_service_region",
-                        "region": found_region,
+                        "type": "isochrone_service_regions",
+                        "region_isochrones": region_isochrones,
+                        "location_lng": location_longitude,
+                        "location_lat": location_latitude,
                     },
                 )
 
@@ -1112,10 +1120,18 @@ class ChatConsumer(AsyncWebsocketConsumer):
         # Send message to WebSocket
         await self.send(text_data=json.dumps({"notifications": notifications}))
 
-    async def isochrone_service_region(self, event):
-        region = event["region"]
+    async def isochrone_service_regions(self, event):
+        region_isochrones = event["region_isochrones"]
         # Send message to WebSocket
-        await self.send(text_data=json.dumps({"region": region}))
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "region_isochrones": region_isochrones,
+                    "location_lng": event["location_lng"],
+                    "location_lat": event["location_lat"],
+                }
+            )
+        )
 
     async def privacy(self, event):
         privacy = event["privacy"]

@@ -9,4 +9,3 @@ django-heroku
 firebase-admin
 aiohttp
 asyncio
-shapely
