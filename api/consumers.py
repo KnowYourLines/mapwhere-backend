@@ -587,7 +587,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         if input_payload.get("command") == "fetch_messages":
             asyncio.create_task(self.handle_fetch_messages())
         elif input_payload.get("command") == "fetch_allowed_status":
-            asyncio.create_task(self.fetch_allowed_status())
+            asyncio.create_task(self.handle_fetch_allowed_status())
         elif input_payload.get("command") == "fetch_display_name":
             asyncio.create_task(self.fetch_display_name())
         elif input_payload.get("command") == "get_isochrone_service_region":
