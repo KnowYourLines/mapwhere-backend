@@ -580,6 +580,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
                             "isochrones": room_isochrones,
                         },
                     )
+                else:
+                    await database_sync_to_async(self.delete_intersection_for_room)()
+                    await self.channel_layer.group_send(
+                        self.room_group_name,
+                        {"type": "refresh_area"},
+                    )
 
     # Receive message from WebSocket
     async def receive(self, text_data):
