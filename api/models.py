@@ -148,6 +148,14 @@ class PlaceType(models.Model):
     )
 
 
+class Place(models.Model):
+    id = models.AutoField(primary_key=True)
+    room = models.ForeignKey(Room, on_delete=models.CASCADE)
+    place_id = models.TextField()
+    lng = models.FloatField()
+    lat = models.FloatField()
+
+
 class LocationBubble(models.Model):
     id = models.AutoField(primary_key=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE)

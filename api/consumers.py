@@ -20,6 +20,7 @@ from api.models import (
     LocationBubble,
     Intersection,
     PlaceType,
+    Place,
 )
 
 logger = logging.getLogger(__name__)
@@ -102,6 +103,20 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 "choice": choice,
             },
         )
+
+    def save_place(self, place_id, lat, lng):
+        Place.objects.update_or_create(
+            room=self.room,
+            lng=lng,
+            lat=lat,
+            defaults={
+                "place_id": place_id,
+            },
+        )
+
+    def fetch_places(self):
+        places = self.room.place_set.all().values("place_id", "lat", "lng")
+        return places
 
     def update_display_name(self, new_name):
         self.user.display_name = new_name
@@ -660,6 +675,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
             asyncio.create_task(self.handle_fetch_place_type())
         elif input_payload.get("command") == "update_place_type":
             asyncio.create_task(self.handle_update_place_type(input_payload))
+        elif input_payload.get("command") == "save_place":
+            asyncio.create_task(self.handle_save_place(input_payload))
+        elif input_payload.get("command") == "fetch_places":
+            asyncio.create_task(self.handle_fetch_places())
         elif input_payload.get("command") == "fetch_room_name":
             asyncio.create_task(self.handle_fetch_room_name())
         elif input_payload.get("command") == "fetch_members":
@@ -833,6 +852,55 @@ class ChatConsumer(AsyncWebsocketConsumer):
         if not user_not_allowed:
             await database_sync_to_async(self.update_place_type)(
                 input_payload["choice"],
+            )
+
+    async def get_place(self, session, url, old_place_id):
+        async with session.get(url) as resp:
+            try:
+                result = await resp.json()
+                result = result["result"]
+                if old_place_id != result["place_id"]:
+                    await database_sync_to_async(self.save_place)(
+                        result["place_id"],
+                        result["geometry"]["lat"],
+                        result["geometry"]["lng"],
+                    )
+                return result
+            except aiohttp.ContentTypeError:
+                logger.error(f"Place id refresh failed. {await resp.text()}")
+
+    async def handle_fetch_places(self):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            places = await database_sync_to_async(self.fetch_places)()
+            async with aiohttp.ClientSession() as session:
+                tasks = []
+                for place in places:
+                    url = (
+                        f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place['place_id']}&"
+                        f"fields=formatted_phone_number,geometry,icon,name,opening_hours,url,place_id,website,"
+                        f"rating,price_level,vicinity&key={os.environ.get('FIREBASE_API_KEY')}"
+                    )
+                    tasks.append(
+                        asyncio.ensure_future(
+                            self.get_place(session, url, place["place_id"])
+                        )
+                    )
+                places = await asyncio.gather(*tasks)
+            await self.channel_layer.send(
+                self.room_group_name,
+                {"type": "places", "places": places},
+            )
+
+    async def handle_save_place(self, input_payload):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            await database_sync_to_async(self.save_place)(
+                input_payload["id"], input_payload["lat"], input_payload["lng"]
+            )
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_places"},
             )
 
     async def handle_update_location_bubble(self, input_payload):
@@ -1262,3 +1330,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def refresh_place_type(self, event):
         # Send message to WebSocket
         await self.send(text_data=json.dumps({"refresh_place_type": True}))
+
+    async def refresh_places(self, event):
+        # Send message to WebSocket
+        await self.send(text_data=json.dumps({"refresh_places": True}))
+
+    async def places(self, event):
+        places = event["places"]
+        # Send message to WebSocket
+        await self.send(text_data=json.dumps({"places": places}))

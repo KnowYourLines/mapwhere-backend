@@ -14,6 +14,7 @@ setup:
     FIREBASE_CLIENT_EMAIL: to
     FIREBASE_CLIENT_ID: version
     FIREBASE_CLIENT_CERT_URL: control
+    FIREBASE_API_KEY: key
     TARGOMO_API_KEY: key
     ALLOWED_HOSTS: frontend
 build:
