@@ -19,6 +19,7 @@ from api.models import (
     Notification,
     LocationBubble,
     Intersection,
+    PlaceType,
 )
 
 logger = logging.getLogger(__name__)
@@ -93,6 +94,15 @@ class ChatConsumer(AsyncWebsocketConsumer):
         self.update_user_location_notification()
         return created
 
+    def update_place_type(self, choice):
+        PlaceType.objects.update_or_create(
+            user=self.user,
+            room=self.room,
+            defaults={
+                "choice": choice,
+            },
+        )
+
     def update_display_name(self, new_name):
         self.user.display_name = new_name
         self.user.save()
@@ -146,6 +156,35 @@ class ChatConsumer(AsyncWebsocketConsumer):
             {
                 "type": "location_bubble",
                 "location_bubble": location_bubble,
+            },
+        )
+
+    def get_user_place_type_for_room(self):
+        place_type = self.user.placetype_set.filter(room=self.room).values(
+            "choice",
+        )
+
+        if len(place_type) > 1:
+            logger.info(
+                f"Got multiple place types for user {self.user.uid} in room {self.room.id}"
+            )
+        if len(place_type) > 0:
+            return place_type[0]["choice"]
+        return None
+
+    async def fetch_place_type(self):
+        place_type = await database_sync_to_async(self.get_user_place_type_for_room)()
+        await self.channel_layer.send(
+            self.channel_name,
+            {
+                "type": "place_type",
+                "place_type": place_type,
+            },
+        )
+        await self.channel_layer.send(
+            self.channel_name,
+            {
+                "type": "refresh_place_type",
             },
         )
 
@@ -617,6 +656,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
             asyncio.create_task(self.handle_fetch_location_bubble())
         elif input_payload.get("command") == "update_location_bubble":
             asyncio.create_task(self.handle_update_location_bubble(input_payload))
+        elif input_payload.get("command") == "fetch_place_type":
+            asyncio.create_task(self.handle_fetch_place_type())
+        elif input_payload.get("command") == "update_place_type":
+            asyncio.create_task(self.handle_update_place_type(input_payload))
         elif input_payload.get("command") == "fetch_room_name":
             asyncio.create_task(self.handle_fetch_room_name())
         elif input_payload.get("command") == "fetch_members":
@@ -770,11 +813,27 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 self.channel_name,
                 {"type": "refresh_users_missing_locations"},
             )
+            await self.channel_layer.send(
+                self.channel_name,
+                {"type": "refresh_place_type"},
+            )
+
+    async def handle_fetch_place_type(self):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            await self.fetch_place_type()
 
     async def handle_fetch_location_bubble(self):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
             await self.fetch_location_bubble()
+
+    async def handle_update_place_type(self, input_payload):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            await database_sync_to_async(self.update_place_type)(
+                input_payload["choice"],
+            )
 
     async def handle_update_location_bubble(self, input_payload):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
@@ -1106,6 +1165,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
         # Send message to WebSocket
         await self.send(text_data=json.dumps({"new_room_name": name}))
 
+    async def place_type(self, event):
+        choice = event["place_type"]
+        # Send message to WebSocket
+        await self.send(text_data=json.dumps({"place_type": choice}))
+
     async def members(self, event):
         members = event["members"]
         # Send message to WebSocket
@@ -1194,3 +1258,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def refresh_allowed_status(self, event):
         # Send message to WebSocket
         await self.send(text_data=json.dumps({"refresh_allowed_status": True}))
+
+    async def refresh_place_type(self, event):
+        # Send message to WebSocket
+        await self.send(text_data=json.dumps({"refresh_place_type": True}))
