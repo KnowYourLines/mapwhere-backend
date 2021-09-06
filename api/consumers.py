@@ -115,7 +115,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         )
 
     def fetch_places(self):
-        places = self.room.place_set.all().values("place_id", "lat", "lng")
+        places = list(self.room.place_set.all().values("place_id", "lat", "lng"))
         return places
 
     def update_display_name(self, new_name):
@@ -859,11 +859,13 @@ class ChatConsumer(AsyncWebsocketConsumer):
             try:
                 result = await resp.json()
                 result = result["result"]
-                if old_place_id != result["place_id"]:
+                result_place_id = result["place_id"]
+                result_location = result["geometry"]["location"]
+                if old_place_id != result_place_id:
                     await database_sync_to_async(self.save_place)(
-                        result["place_id"],
-                        result["geometry"]["lat"],
-                        result["geometry"]["lng"],
+                        result_place_id,
+                        result_location["lat"],
+                        result_location["lng"],
                     )
                 return result
             except aiohttp.ContentTypeError:
@@ -886,11 +888,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
                             self.get_place(session, url, place["place_id"])
                         )
                     )
-                places = await asyncio.gather(*tasks)
-            await self.channel_layer.send(
-                self.room_group_name,
-                {"type": "places", "places": places},
-            )
+                results = await asyncio.gather(*tasks)
+                await self.channel_layer.send(
+                    self.channel_name,
+                    {"type": "places", "places": results},
+                )
 
     async def handle_save_place(self, input_payload):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
