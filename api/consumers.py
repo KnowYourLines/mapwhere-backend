@@ -287,7 +287,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         unobserved_notifications = list(
             self.user.notification_set.filter(
                 room=self.room, timestamp__lte=self.user.last_logged_in, read=False
-            ).values("message", "user_location")
+            ).values("message", "user_location", "added_place")
         )
         logger.info(f"unobserved: {unobserved_notifications}")
         return unobserved_notifications
@@ -328,16 +328,26 @@ class ChatConsumer(AsyncWebsocketConsumer):
             if unobserved_notifications:
                 hightlight_chat = False
                 highlight_area = False
+                highlight_vote = False
                 for notification in unobserved_notifications:
                     if notification.get("message"):
                         hightlight_chat = True
                     if notification.get("user_location"):
                         highlight_area = True
+                    if notification.get("added_place"):
+                        highlight_vote = True
                 if hightlight_chat:
                     await self.channel_layer.send(
                         self.channel_name,
                         {
                             "type": "highlight_chat",
+                        },
+                    )
+                if highlight_vote:
+                    await self.channel_layer.send(
+                        self.channel_name,
+                        {
+                            "type": "highlight_vote",
                         },
                     )
                 if highlight_area:
@@ -1401,6 +1411,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def highlight_area(self, event):
         # Send message to WebSocket
         await self.send(text_data=json.dumps({"highlight_area": True}))
+
+    async def highlight_vote(self, event):
+        # Send message to WebSocket
+        await self.send(text_data=json.dumps({"highlight_vote": True}))
 
     async def refresh_allowed_status(self, event):
         # Send message to WebSocket
