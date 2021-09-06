@@ -31,7 +31,6 @@ default_app = firebase_admin.initialize_app(cred)
 
 @database_sync_to_async
 def get_user(token):
-    logger.debug(f"token: {token}")
     try:
         decoded_token = auth.verify_id_token(token)
     except Exception:

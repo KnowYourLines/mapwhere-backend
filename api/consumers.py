@@ -7,6 +7,7 @@ import json
 import logging
 
 import aiohttp as aiohttp
+import requests as requests
 from asgiref.sync import async_to_sync
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
@@ -153,23 +154,32 @@ class ChatConsumer(AsyncWebsocketConsumer):
         )
 
     def get_user_location_bubble_for_room(self):
-        location_bubbles = self.user.locationbubble_set.filter(room=self.room).values(
-            "address",
-            "latitude",
-            "longitude",
-            "hours",
-            "minutes",
-            "transportation",
-            "region",
-            "place_id",
-        )
+        location_bubbles = self.user.locationbubble_set.filter(room=self.room)
 
         if len(location_bubbles) > 1:
             logger.info(
                 f"Got multiple location bubbles for user {self.user.uid} in room {self.room.id}"
             )
         if len(location_bubbles) > 0:
-            return location_bubbles[0]
+            location = location_bubbles.first()
+            url = (
+                f"https://maps.googleapis.com/maps/api/place/details/json?place_id={location.place_id}&"
+                f"fields=place_id&key={os.environ.get('FIREBASE_API_KEY')}"
+            )
+            refreshed_place_id = requests.get(url).json()["result"]["place_id"]
+            if refreshed_place_id != location.place_id:
+                location.place_id = refreshed_place_id
+                location.save()
+            return {
+                "address": location.address,
+                "latitude": location.latitude,
+                "longitude": location.longitude,
+                "hours": location.hours,
+                "minutes": location.minutes,
+                "transportation": location.transportation,
+                "region": location.region,
+                "place_id": location.place_id,
+            }
         return {}
 
     async def fetch_location_bubble(self):
@@ -276,7 +286,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 room=self.room, timestamp__lte=self.user.last_logged_in, read=False
             ).values("message", "user_location")
         )
-        logger.debug(f"unobserved: {unobserved_notifications}")
+        logger.info(f"unobserved: {unobserved_notifications}")
         return unobserved_notifications
 
     def get_user_notifications(self):
