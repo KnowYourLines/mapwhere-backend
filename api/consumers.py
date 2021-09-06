@@ -891,13 +891,40 @@ class ChatConsumer(AsyncWebsocketConsumer):
             except aiohttp.ContentTypeError:
                 logger.error(f"Place id refresh failed. {await resp.text()}")
 
+    async def get_distance_matrix(self, session, url):
+        async with session.get(url) as resp:
+            try:
+                result = await resp.json()
+                result = result["rows"][0]["elements"]
+                return result
+            except aiohttp.ContentTypeError:
+                logger.error(f"Distance matrix failed. {await resp.text()}")
+
     async def handle_fetch_places(self):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
             places = await database_sync_to_async(self.fetch_places)()
+            location_bubble = await database_sync_to_async(
+                self.get_user_location_bubble_for_room
+            )()
+            mode = "DRIVING"
+            if location_bubble["transportation"] == "bike":
+                mode = "BICYCLING"
+            elif location_bubble["transportation"] == "transit":
+                mode = "TRANSIT"
+            elif location_bubble["transportation"] == "walk":
+                mode = "WALKING"
+            distance_matrix_url = (
+                f"https://maps.googleapis.com/maps/api/distancematrix/json?key="
+                f"{os.environ.get('FIREBASE_API_KEY')}&origins=place_id:{location_bubble['place_id']}"
+                f"&mode={mode}&destinations="
+            )
+
             async with aiohttp.ClientSession() as session:
                 tasks = []
+
                 for place in places:
+                    distance_matrix_url += f"place_id:{place['place_id']}|"
                     url = (
                         f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place['place_id']}&"
                         f"fields=formatted_phone_number,geometry,icon,name,opening_hours,url,place_id,website,"
@@ -908,6 +935,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
                             self.get_place(session, url, place["place_id"])
                         )
                     )
+                distance_matrix_url = distance_matrix_url[:-1]
+                tasks.append(
+                    asyncio.ensure_future(
+                        self.get_distance_matrix(session, distance_matrix_url)
+                    )
+                )
                 results = await asyncio.gather(*tasks)
                 await self.channel_layer.send(
                     self.channel_name,
