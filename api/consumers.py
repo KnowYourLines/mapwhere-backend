@@ -77,7 +77,15 @@ class ChatConsumer(AsyncWebsocketConsumer):
             pass
 
     def update_location_bubble(
-        self, address, latitude, longitude, transportation, hours, minutes, region
+        self,
+        address,
+        latitude,
+        longitude,
+        transportation,
+        hours,
+        minutes,
+        region,
+        place_id,
     ):
         location_bubble, created = LocationBubble.objects.update_or_create(
             user=self.user,
@@ -90,6 +98,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 "hours": hours,
                 "minutes": minutes,
                 "region": region,
+                "place_id": place_id,
             },
         )
         self.update_user_location_notification()
@@ -152,6 +161,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             "minutes",
             "transportation",
             "region",
+            "place_id",
         )
 
         if len(location_bubbles) > 1:
@@ -916,6 +926,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 input_payload["hours"],
                 input_payload["minutes"],
                 input_payload["region"],
+                input_payload["place_id"],
             )
             await self.channel_layer.group_send(
                 self.room_group_name,

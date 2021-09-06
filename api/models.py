@@ -165,6 +165,7 @@ class LocationBubble(models.Model):
     longitude = models.FloatField()
     hours = models.PositiveIntegerField()
     minutes = models.PositiveIntegerField()
+    place_id = models.TextField()
 
     BIKE = "bike"
     TRANSIT = "transit"
