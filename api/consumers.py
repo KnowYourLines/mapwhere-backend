@@ -115,7 +115,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         )
 
     def save_place(self, place_id, lat, lng):
-        Place.objects.update_or_create(
+        place, created = Place.objects.update_or_create(
             room=self.room,
             lng=lng,
             lat=lat,
@@ -123,6 +123,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 "place_id": place_id,
             },
         )
+        if created:
+            self.added_place_notification()
+        return created
 
     def fetch_places(self):
         places = list(self.room.place_set.all().values("place_id", "lat", "lng"))
@@ -305,6 +308,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 "join_request__user__display_name",
                 "now_public",
                 "now_private",
+                "added_place__display_name",
             )
             .order_by("room", "-timestamp")
             .distinct("room")
@@ -430,6 +434,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
         for user in self.room.members.all():
             Notification.objects.create(
                 user=user, room=self.room, user_location=self.user
+            )
+
+    def added_place_notification(self):
+        for user in self.room.members.all():
+            Notification.objects.create(
+                user=user, room=self.room, added_place=self.user
             )
 
     def create_user_joined_notification_for_all_room_members(self, user_joining):
@@ -907,24 +917,27 @@ class ChatConsumer(AsyncWebsocketConsumer):
             location_bubble = await database_sync_to_async(
                 self.get_user_location_bubble_for_room
             )()
-            mode = "transit"
-            if location_bubble["transportation"] == "bike":
-                mode = "bicycling"
-            elif location_bubble["transportation"] == "car":
-                mode = "driving"
-            elif location_bubble["transportation"] == "walk":
-                mode = "walking"
-            distance_matrix_url = (
-                f"https://maps.googleapis.com/maps/api/distancematrix/json?key="
-                f"{os.environ.get('FIREBASE_API_KEY')}&origins=place_id:{location_bubble['place_id']}"
-                f"&mode={mode}&destinations="
-            )
+
+            if location_bubble:
+                mode = "transit"
+                if location_bubble["transportation"] == "bike":
+                    mode = "bicycling"
+                elif location_bubble["transportation"] == "car":
+                    mode = "driving"
+                elif location_bubble["transportation"] == "walk":
+                    mode = "walking"
+                distance_matrix_url = (
+                    f"https://maps.googleapis.com/maps/api/distancematrix/json?key="
+                    f"{os.environ.get('FIREBASE_API_KEY')}&origins=place_id:{location_bubble['place_id']}"
+                    f"&mode={mode}&destinations="
+                )
 
             async with aiohttp.ClientSession() as session:
                 tasks = []
 
                 for place in places:
-                    distance_matrix_url += f"place_id:{place['place_id']}|"
+                    if location_bubble:
+                        distance_matrix_url += f"place_id:{place['place_id']}|"
                     url = (
                         f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place['place_id']}&"
                         f"fields=formatted_phone_number,geometry,icon,name,opening_hours,url,place_id,website,"
@@ -935,12 +948,13 @@ class ChatConsumer(AsyncWebsocketConsumer):
                             self.get_place(session, url, place["place_id"])
                         )
                     )
-                distance_matrix_url = distance_matrix_url[:-1]
-                tasks.append(
-                    asyncio.ensure_future(
-                        self.get_distance_matrix(session, distance_matrix_url)
+                if location_bubble:
+                    distance_matrix_url = distance_matrix_url[:-1]
+                    tasks.append(
+                        asyncio.ensure_future(
+                            self.get_distance_matrix(session, distance_matrix_url)
+                        )
                     )
-                )
                 results = await asyncio.gather(*tasks)
                 await self.channel_layer.send(
                     self.channel_name,
@@ -950,13 +964,22 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def handle_save_place(self, input_payload):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
-            await database_sync_to_async(self.save_place)(
+            new_place_added = await database_sync_to_async(self.save_place)(
                 input_payload["id"], input_payload["lat"], input_payload["lng"]
             )
-            await self.channel_layer.group_send(
-                self.room_group_name,
-                {"type": "refresh_places"},
-            )
+            if new_place_added:
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {"type": "refresh_places"},
+                )
+                rooms_to_notify = await database_sync_to_async(
+                    self.get_rooms_of_all_members
+                )()
+                for room in rooms_to_notify:
+                    await self.channel_layer.group_send(
+                        room,
+                        {"type": "refresh_notifications"},
+                    )
 
     async def handle_update_location_bubble(self, input_payload):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()

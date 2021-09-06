@@ -271,6 +271,13 @@ class Notification(models.Model):
         null=True,
         blank=True,
     )
+    added_place = models.ForeignKey(
+        User,
+        related_name="added_place_user",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
     join_request = models.ForeignKey(
         JoinRequest, on_delete=models.CASCADE, null=True, blank=True
     )
@@ -292,6 +299,7 @@ class Notification(models.Model):
                     or self.now_public
                     or self.now_private
                     or self.user_location
+                    or self.added_place
                 )
             )
             or (
@@ -303,6 +311,7 @@ class Notification(models.Model):
                     or self.now_public
                     or self.now_private
                     or self.user_location
+                    or self.added_place
                 )
             )
             or (
@@ -314,6 +323,7 @@ class Notification(models.Model):
                     or self.now_public
                     or self.now_private
                     or self.user_location
+                    or self.added_place
                 )
             )
             or (
@@ -325,6 +335,7 @@ class Notification(models.Model):
                     or self.now_public
                     or self.now_private
                     or self.user_location
+                    or self.added_place
                 )
             )
             or (
@@ -336,6 +347,7 @@ class Notification(models.Model):
                     or self.now_public
                     or self.now_private
                     or self.user_location
+                    or self.added_place
                 )
             )
             or (
@@ -347,6 +359,7 @@ class Notification(models.Model):
                     or self.join_request
                     or self.now_private
                     or self.user_location
+                    or self.added_place
                 )
             )
             or (
@@ -358,6 +371,7 @@ class Notification(models.Model):
                     or self.join_request
                     or self.now_public
                     or self.user_location
+                    or self.added_place
                 )
             )
             or (
@@ -369,12 +383,25 @@ class Notification(models.Model):
                     or self.join_request
                     or self.now_public
                     or self.now_private
+                    or self.added_place
+                )
+            )
+            or (
+                self.added_place
+                and (
+                    self.message
+                    or self.user_joined
+                    or self.user_left
+                    or self.join_request
+                    or self.now_public
+                    or self.now_private
+                    or self.user_location
                 )
             )
         ):
             raise ValidationError(
                 _(
                     "Notification must be for either a new message, user leaving, user joining, join request, user "
-                    "location or privacy change. "
+                    "location, user adding place or privacy change. "
                 )
             )
