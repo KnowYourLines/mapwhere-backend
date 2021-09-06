@@ -907,13 +907,13 @@ class ChatConsumer(AsyncWebsocketConsumer):
             location_bubble = await database_sync_to_async(
                 self.get_user_location_bubble_for_room
             )()
-            mode = "DRIVING"
+            mode = "transit"
             if location_bubble["transportation"] == "bike":
-                mode = "BICYCLING"
-            elif location_bubble["transportation"] == "transit":
-                mode = "TRANSIT"
+                mode = "bicycling"
+            elif location_bubble["transportation"] == "car":
+                mode = "driving"
             elif location_bubble["transportation"] == "walk":
-                mode = "WALKING"
+                mode = "walking"
             distance_matrix_url = (
                 f"https://maps.googleapis.com/maps/api/distancematrix/json?key="
                 f"{os.environ.get('FIREBASE_API_KEY')}&origins=place_id:{location_bubble['place_id']}"
