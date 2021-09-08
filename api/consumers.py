@@ -958,7 +958,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                             self.get_place(session, url, place["place_id"])
                         )
                     )
-                if location_bubble:
+                if location_bubble and places:
                     distance_matrix_url = distance_matrix_url[:-1]
                     tasks.append(
                         asyncio.ensure_future(
@@ -1015,6 +1015,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 await self.channel_layer.group_send(
                     room,
                     {"type": "refresh_notifications"},
+                )
+                await self.channel_layer.group_send(
+                    room,
+                    {"type": "refresh_users_missing_locations"},
                 )
 
     async def handle_fetch_room_name(self):
