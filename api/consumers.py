@@ -11,6 +11,7 @@ import requests as requests
 from asgiref.sync import async_to_sync
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
+from shapely.geometry import Polygon, Point, MultiPolygon
 
 from api.models import (
     Message,
@@ -715,6 +716,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             asyncio.create_task(self.handle_fetch_place_type())
         elif input_payload.get("command") == "update_place_type":
             asyncio.create_task(self.handle_update_place_type(input_payload))
+            asyncio.create_task(self.handle_get_place_type_results(input_payload))
         elif input_payload.get("command") == "save_place":
             asyncio.create_task(self.handle_save_place(input_payload))
         elif input_payload.get("command") == "fetch_places":
@@ -894,6 +896,134 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 input_payload["choice"],
             )
 
+    async def nearby_search_results(self, session, url):
+        async with session.get(url) as resp:
+            try:
+                response = await resp.json()
+                return response
+            except aiohttp.ContentTypeError:
+                logger.error(f"Nearby search failed. {await resp.text()}")
+
+    async def handle_get_place_type_results(self, input_payload):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            choice = input_payload["choice"]
+            radius = input_payload["radius"]
+            lat = input_payload["lat"]
+            lng = input_payload["lng"]
+            place_results = []
+            intersection = await self.fetch_area()
+            async with aiohttp.ClientSession() as session:
+                url = (
+                    f"https://maps.googleapis.com/maps/api/place/nearbysearch/json?location={lat}%2C{lng}&radius"
+                    f"={radius}&type={choice}&key={os.environ.get('FIREBASE_API_KEY')}"
+                )
+                tasks = [
+                    asyncio.ensure_future(self.nearby_search_results(session, url))
+                ]
+                response = await asyncio.gather(*tasks)
+                response = response[0]
+                place_results += response["results"]
+
+                # while response.get("next_page_token"):
+                #     next_page_token = response["next_page_token"]
+                #     next_url = f"https://maps.googleapis.com/maps/api/place/nearbysearch/json?pagetoken={next_page_token}&key={os.environ.get('FIREBASE_API_KEY')}"
+                #     tasks = [
+                #         asyncio.ensure_future(
+                #             self.nearby_search_results(session, next_url)
+                #         )
+                #     ]
+                #     response = await asyncio.gather(*tasks)
+                #     response = response[0]
+                #     if response["status"] == "INVALID_REQUEST":
+                #         logger.info(f"uh oh")
+                #         response["next_page_token"] = next_page_token
+                #         asyncio.sleep(2)
+                #     else:
+                #         place_results += response["results"]
+
+                tasks = []
+                if intersection["type"] == "MultiPolygon":
+                    polygons = []
+                    for polygon in intersection["coordinates"]:
+                        subpolygons = []
+                        for subpolygon in polygon:
+                            coordinates = []
+                            for lng, lat in subpolygon:
+                                coordinates.append((lng, lat))
+                            subpolygons.append(Polygon(coordinates))
+                        polygons.append(
+                            Polygon(
+                                subpolygons[0].exterior.coords,
+                                [hole.exterior.coords for hole in subpolygons[1:]],
+                            )
+                        )
+                    intersection = MultiPolygon(polygons)
+                elif intersection["type"] == "Polygon":
+                    subpolygons = []
+                    for subpolygon in intersection["coordinates"]:
+                        coordinates = []
+                        for lng, lat in subpolygon:
+                            coordinates.append((lng, lat))
+                        subpolygons.append(Polygon(coordinates))
+                    intersection = Polygon(
+                        subpolygons[0].exterior.coords,
+                        [hole.exterior.coords for hole in subpolygons[1:]],
+                    )
+
+                for place in place_results:
+                    logger.info(
+                        intersection.distance(
+                            Point(
+                                place["geometry"]["location"]["lng"],
+                                place["geometry"]["location"]["lat"],
+                            )
+                        )
+                    )
+                    logger.info(
+                        intersection.covers(
+                            Point(
+                                place["geometry"]["location"]["lng"],
+                                place["geometry"]["location"]["lat"],
+                            )
+                        )
+                    )
+
+                    url = (
+                        f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place['place_id']}&"
+                        f"fields=formatted_phone_number,geometry,icon,name,url,website,"
+                        f"rating,vicinity&key={os.environ.get('FIREBASE_API_KEY')}"
+                    )
+                    if (
+                        intersection.covers(
+                            Point(
+                                place["geometry"]["location"]["lng"],
+                                place["geometry"]["location"]["lat"],
+                            )
+                        )
+                        or intersection.distance(
+                            Point(
+                                place["geometry"]["location"]["lng"],
+                                place["geometry"]["location"]["lat"],
+                            )
+                        )
+                        < 1e-3
+                    ):
+                        tasks.append(
+                            asyncio.ensure_future(
+                                self.get_place_type_result(session, url)
+                            )
+                        )
+
+                results = await asyncio.gather(*tasks)
+            await self.channel_layer.send(
+                self.channel_name,
+                {
+                    "type": "place_type_results",
+                    "place_type_results": results,
+                },
+            )
+
     async def get_place(self, session, url, old_place_id):
         async with session.get(url) as resp:
             try:
@@ -910,6 +1040,15 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 return result
             except aiohttp.ContentTypeError:
                 logger.error(f"Place id refresh failed. {await resp.text()}")
+
+    async def get_place_type_result(self, session, url):
+        async with session.get(url) as resp:
+            try:
+                result = await resp.json()
+                result = result["result"]
+                return result
+            except aiohttp.ContentTypeError:
+                logger.error(f"Getting place details failed. {await resp.text()}")
 
     async def get_distance_matrix(self, session, url):
         async with session.get(url) as resp:
@@ -1436,3 +1575,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
         places = event["places"]
         # Send message to WebSocket
         await self.send(text_data=json.dumps({"places": places}))
+
+    async def place_type_results(self, event):
+        place_type_results = event["place_type_results"]
+        # Send message to WebSocket
+        await self.send(
+            text_data=json.dumps({"place_type_results": place_type_results})
+        )
