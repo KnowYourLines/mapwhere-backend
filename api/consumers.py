@@ -917,7 +917,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             async with aiohttp.ClientSession() as session:
                 url = (
                     f"https://maps.googleapis.com/maps/api/place/nearbysearch/json?location={lat}%2C{lng}&radius"
-                    f"={radius}&type={choice}&key={os.environ.get('FIREBASE_API_KEY')}"
+                    f"={radius}&type={choice}&keyword={choice}&key={os.environ.get('FIREBASE_API_KEY')}"
                 )
                 tasks = [
                     asyncio.ensure_future(self.nearby_search_results(session, url))
