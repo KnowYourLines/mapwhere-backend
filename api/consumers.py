@@ -960,7 +960,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     url = (
                         f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place['place_id']}&"
                         f"fields=formatted_phone_number,geometry,icon,name,url,website,"
-                        f"rating,vicinity&key={os.environ.get('FIREBASE_API_KEY')}"
+                        f"rating,vicinity,place_id&key={os.environ.get('FIREBASE_API_KEY')}"
                     )
                     if (
                         intersection.covers(
@@ -1059,7 +1059,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     url = (
                         f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place['place_id']}&"
                         f"fields=formatted_phone_number,geometry,icon,name,url,website,"
-                        f"rating,vicinity&key={os.environ.get('FIREBASE_API_KEY')}"
+                        f"rating,vicinity,place_id&key={os.environ.get('FIREBASE_API_KEY')}"
                     )
                     if (
                         intersection.covers(
