@@ -290,7 +290,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 room=self.room, timestamp__lte=self.user.last_logged_in, read=False
             ).values("message", "user_location", "added_place")
         )
-        logger.info(f"unobserved: {unobserved_notifications}")
         return unobserved_notifications
 
     def get_user_notifications(self):
@@ -958,23 +957,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
                 tasks = []
                 for place in place_results:
-                    logger.info(
-                        intersection.distance(
-                            Point(
-                                place["geometry"]["location"]["lng"],
-                                place["geometry"]["location"]["lat"],
-                            )
-                        )
-                    )
-                    logger.info(
-                        intersection.covers(
-                            Point(
-                                place["geometry"]["location"]["lng"],
-                                place["geometry"]["location"]["lat"],
-                            )
-                        )
-                    )
-
                     url = (
                         f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place['place_id']}&"
                         f"fields=formatted_phone_number,geometry,icon,name,url,website,"
@@ -1074,23 +1056,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
                 tasks = []
                 for place in place_results:
-                    logger.info(
-                        intersection.distance(
-                            Point(
-                                place["geometry"]["location"]["lng"],
-                                place["geometry"]["location"]["lat"],
-                            )
-                        )
-                    )
-                    logger.info(
-                        intersection.covers(
-                            Point(
-                                place["geometry"]["location"]["lng"],
-                                place["geometry"]["location"]["lat"],
-                            )
-                        )
-                    )
-
                     url = (
                         f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place['place_id']}&"
                         f"fields=formatted_phone_number,geometry,icon,name,url,website,"
