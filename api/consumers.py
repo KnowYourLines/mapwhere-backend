@@ -547,7 +547,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     "region": region,
                     "travel_mode": list(payload["sources"][0]["tm"])[0],
                 }
-            except aiohttp.ContentTypeError:
+            except (aiohttp.ContentTypeError, KeyError):
                 logger.error(
                     f"Targomo API call failed for {payload}. {await resp.text()}"
                 )
@@ -745,6 +745,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
             asyncio.create_task(self.handle_fetch_privacy())
         elif input_payload.get("command") == "update_privacy":
             asyncio.create_task(self.handle_privacy_update(input_payload))
+        elif input_payload.get("command") == "get_next_page_places":
+            asyncio.create_task(self.get_next_page_places(input_payload))
         elif input_payload.get("command") == "join_room":
             asyncio.create_task(self.join_room())
         else:
@@ -923,26 +925,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 ]
                 response = await asyncio.gather(*tasks)
                 response = response[0]
+                next_page_token = response.get("next_page_token", "")
                 place_results += response["results"]
 
-                # while response.get("next_page_token"):
-                #     next_page_token = response["next_page_token"]
-                #     next_url = f"https://maps.googleapis.com/maps/api/place/nearbysearch/json?pagetoken={next_page_token}&key={os.environ.get('FIREBASE_API_KEY')}"
-                #     tasks = [
-                #         asyncio.ensure_future(
-                #             self.nearby_search_results(session, next_url)
-                #         )
-                #     ]
-                #     response = await asyncio.gather(*tasks)
-                #     response = response[0]
-                #     if response["status"] == "INVALID_REQUEST":
-                #         logger.info(f"uh oh")
-                #         response["next_page_token"] = next_page_token
-                #         asyncio.sleep(2)
-                #     else:
-                #         place_results += response["results"]
-
-                tasks = []
                 if intersection["type"] == "MultiPolygon":
                     polygons = []
                     for polygon in intersection["coordinates"]:
@@ -971,6 +956,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         [hole.exterior.coords for hole in subpolygons[1:]],
                     )
 
+                tasks = []
                 for place in place_results:
                     logger.info(
                         intersection.distance(
@@ -1016,11 +1002,136 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         )
 
                 results = await asyncio.gather(*tasks)
+
             await self.channel_layer.send(
                 self.channel_name,
                 {
                     "type": "place_type_results",
                     "place_type_results": results,
+                },
+            )
+            await self.channel_layer.send(
+                self.channel_name,
+                {
+                    "type": "next_page_places_token",
+                    "next_page_places_token": next_page_token,
+                },
+            )
+
+    async def get_next_page_places(self, input_payload):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            next_page_token = input_payload["token"]
+            place_results = []
+            intersection = await self.fetch_area()
+            async with aiohttp.ClientSession() as session:
+                while next_page_token:
+                    next_url = (
+                        f"https://maps.googleapis.com/maps/api/place/nearbysearch/json?pagetoken"
+                        f"={next_page_token}&key={os.environ.get('FIREBASE_API_KEY')}"
+                    )
+                    tasks = [
+                        asyncio.ensure_future(
+                            self.nearby_search_results(session, next_url)
+                        )
+                    ]
+                    response = await asyncio.gather(*tasks)
+                    response = response[0]
+                    if response["status"] == "INVALID_REQUEST":
+                        logger.info(f"next page token currently invalid")
+                    else:
+                        place_results += response["results"]
+                        new_next_page_token = response.get("next_page_token", "")
+                        break
+
+                if intersection["type"] == "MultiPolygon":
+                    polygons = []
+                    for polygon in intersection["coordinates"]:
+                        subpolygons = []
+                        for subpolygon in polygon:
+                            coordinates = []
+                            for lng, lat in subpolygon:
+                                coordinates.append((lng, lat))
+                            subpolygons.append(Polygon(coordinates))
+                        polygons.append(
+                            Polygon(
+                                subpolygons[0].exterior.coords,
+                                [hole.exterior.coords for hole in subpolygons[1:]],
+                            )
+                        )
+                    intersection = MultiPolygon(polygons)
+                elif intersection["type"] == "Polygon":
+                    subpolygons = []
+                    for subpolygon in intersection["coordinates"]:
+                        coordinates = []
+                        for lng, lat in subpolygon:
+                            coordinates.append((lng, lat))
+                        subpolygons.append(Polygon(coordinates))
+                    intersection = Polygon(
+                        subpolygons[0].exterior.coords,
+                        [hole.exterior.coords for hole in subpolygons[1:]],
+                    )
+
+                tasks = []
+                for place in place_results:
+                    logger.info(
+                        intersection.distance(
+                            Point(
+                                place["geometry"]["location"]["lng"],
+                                place["geometry"]["location"]["lat"],
+                            )
+                        )
+                    )
+                    logger.info(
+                        intersection.covers(
+                            Point(
+                                place["geometry"]["location"]["lng"],
+                                place["geometry"]["location"]["lat"],
+                            )
+                        )
+                    )
+
+                    url = (
+                        f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place['place_id']}&"
+                        f"fields=formatted_phone_number,geometry,icon,name,url,website,"
+                        f"rating,vicinity&key={os.environ.get('FIREBASE_API_KEY')}"
+                    )
+                    if (
+                        intersection.covers(
+                            Point(
+                                place["geometry"]["location"]["lng"],
+                                place["geometry"]["location"]["lat"],
+                            )
+                        )
+                        or intersection.distance(
+                            Point(
+                                place["geometry"]["location"]["lng"],
+                                place["geometry"]["location"]["lat"],
+                            )
+                        )
+                        < 1e-3
+                    ):
+                        tasks.append(
+                            asyncio.ensure_future(
+                                self.get_place_type_result(session, url)
+                            )
+                        )
+
+                results = await asyncio.gather(*tasks)
+
+            await self.channel_layer.send(
+                self.channel_name,
+                {
+                    "type": "next_page_place_results",
+                    "next_page_place_results": results,
+                    "token_used": next_page_token,
+                },
+            )
+            await self.channel_layer.send(
+                self.channel_name,
+                {
+                    "type": "next_page_places_token",
+                    "next_page_places_token": new_next_page_token,
                 },
             )
 
@@ -1581,4 +1692,24 @@ class ChatConsumer(AsyncWebsocketConsumer):
         # Send message to WebSocket
         await self.send(
             text_data=json.dumps({"place_type_results": place_type_results})
+        )
+
+    async def next_page_place_results(self, event):
+        next_page_place_results = event["next_page_place_results"]
+        token_used = event["token_used"]
+        # Send message to WebSocket
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "next_page_place_results": next_page_place_results,
+                    "token_used": token_used,
+                }
+            )
+        )
+
+    async def next_page_places_token(self, event):
+        next_page_places_token = event["next_page_places_token"]
+        # Send message to WebSocket
+        await self.send(
+            text_data=json.dumps({"next_page_places_token": next_page_places_token})
         )
