@@ -21,8 +21,8 @@ from api.models import (
     Notification,
     LocationBubble,
     Intersection,
-    PlaceType,
     Place,
+    AreaQuery,
 )
 
 logger = logging.getLogger(__name__)
@@ -106,12 +106,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
         self.update_user_location_notification()
         return created
 
-    def update_place_type(self, choice):
-        PlaceType.objects.update_or_create(
+    def update_area_query(self, query):
+        AreaQuery.objects.update_or_create(
             user=self.user,
             room=self.room,
             defaults={
-                "choice": choice,
+                "query": query,
             },
         )
 
@@ -198,32 +198,32 @@ class ChatConsumer(AsyncWebsocketConsumer):
             },
         )
 
-    def get_user_place_type_for_room(self):
-        place_type = self.user.placetype_set.filter(room=self.room).values(
-            "choice",
+    def get_user_area_query_for_room(self):
+        area_query = self.user.areaquery_set.filter(room=self.room).values(
+            "query",
         )
 
-        if len(place_type) > 1:
+        if len(area_query) > 1:
             logger.info(
-                f"Got multiple place types for user {self.user.uid} in room {self.room.id}"
+                f"Got multiple area queries for user {self.user.uid} in room {self.room.id}"
             )
-        if len(place_type) > 0:
-            return place_type[0]["choice"]
+        if len(area_query) > 0:
+            return area_query[0]["query"]
         return None
 
-    async def fetch_place_type(self):
-        place_type = await database_sync_to_async(self.get_user_place_type_for_room)()
+    async def fetch_area_query(self):
+        area_query = await database_sync_to_async(self.get_user_area_query_for_room)()
         await self.channel_layer.send(
             self.channel_name,
             {
-                "type": "place_type",
-                "place_type": place_type,
+                "type": "area_query",
+                "area_query": area_query,
             },
         )
         await self.channel_layer.send(
             self.channel_name,
             {
-                "type": "refresh_place_type",
+                "type": "refresh_area_query",
             },
         )
 
@@ -711,11 +711,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
             asyncio.create_task(self.handle_fetch_location_bubble())
         elif input_payload.get("command") == "update_location_bubble":
             asyncio.create_task(self.handle_update_location_bubble(input_payload))
-        elif input_payload.get("command") == "fetch_place_type":
-            asyncio.create_task(self.handle_fetch_place_type())
-        elif input_payload.get("command") == "update_place_type":
-            asyncio.create_task(self.handle_update_place_type(input_payload))
-            asyncio.create_task(self.handle_get_place_type_results(input_payload))
+        elif input_payload.get("command") == "fetch_area_query":
+            asyncio.create_task(self.handle_fetch_area_query())
+        elif input_payload.get("command") == "update_area_query":
+            asyncio.create_task(self.handle_update_area_query(input_payload))
+            asyncio.create_task(self.handle_get_area_query_results(input_payload))
         elif input_payload.get("command") == "save_place":
             asyncio.create_task(self.handle_save_place(input_payload))
         elif input_payload.get("command") == "fetch_places":
@@ -877,56 +877,51 @@ class ChatConsumer(AsyncWebsocketConsumer):
             )
             await self.channel_layer.send(
                 self.channel_name,
-                {"type": "refresh_place_type"},
+                {"type": "refresh_area_query"},
             )
 
-    async def handle_fetch_place_type(self):
+    async def handle_fetch_area_query(self):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
-            await self.fetch_place_type()
+            await self.fetch_area_query()
 
     async def handle_fetch_location_bubble(self):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
             await self.fetch_location_bubble()
 
-    async def handle_update_place_type(self, input_payload):
+    async def handle_update_area_query(self, input_payload):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
-            await database_sync_to_async(self.update_place_type)(
-                input_payload["choice"],
+            await database_sync_to_async(self.update_area_query)(
+                input_payload["query"],
             )
 
-    async def nearby_search_results(self, session, url):
+    async def text_search_results(self, session, url):
         async with session.get(url) as resp:
             try:
                 response = await resp.json()
                 return response
             except aiohttp.ContentTypeError:
-                logger.error(f"Nearby search failed. {await resp.text()}")
+                logger.error(f"Text search failed. {await resp.text()}")
 
-    async def handle_get_place_type_results(self, input_payload):
+    async def handle_get_area_query_results(self, input_payload):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
-            choice = input_payload["choice"]
+            query = input_payload["query"]
             radius = input_payload["radius"]
             lat = input_payload["lat"]
             lng = input_payload["lng"]
             place_results = []
             intersection = await self.fetch_area()
             async with aiohttp.ClientSession() as session:
-                url = (
-                    f"https://maps.googleapis.com/maps/api/place/nearbysearch/json?location={lat}%2C{lng}&radius"
-                    f"={radius}&type={choice}&keyword={choice}&key={os.environ.get('FIREBASE_API_KEY')}"
-                )
-                tasks = [
-                    asyncio.ensure_future(self.nearby_search_results(session, url))
-                ]
+                url = f"https://maps.googleapis.com/maps/api/place/textsearch/json?&query={query}&location={lat},{lng}&radius={radius}&key={os.environ.get('FIREBASE_API_KEY')}"
+                tasks = [asyncio.ensure_future(self.text_search_results(session, url))]
                 response = await asyncio.gather(*tasks)
                 response = response[0]
                 next_page_token = response.get("next_page_token", "")
                 place_results += response["results"]
-
+                logger.info(f"{place_results}")
                 if intersection["type"] == "MultiPolygon":
                     polygons = []
                     for polygon in intersection["coordinates"]:
@@ -956,11 +951,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     )
 
                 tasks = []
+                results_ratings = []
                 for place in place_results:
                     url = (
                         f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place['place_id']}&"
                         f"fields=formatted_phone_number,geometry,icon,name,url,website,"
-                        f"rating,vicinity,place_id&key={os.environ.get('FIREBASE_API_KEY')}"
+                        f"vicinity,place_id&key={os.environ.get('FIREBASE_API_KEY')}"
                     )
                     if (
                         intersection.covers(
@@ -979,17 +975,23 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     ):
                         tasks.append(
                             asyncio.ensure_future(
-                                self.get_place_type_result(session, url)
+                                self.get_area_query_result(session, url)
                             )
                         )
+                        if place.get("rating"):
+                            results_ratings.append(place["rating"])
+                        else:
+                            results_ratings.append(None)
 
                 results = await asyncio.gather(*tasks)
+                for index, rating in enumerate(results_ratings):
+                    results[index]["rating"] = rating
 
             await self.channel_layer.send(
                 self.channel_name,
                 {
-                    "type": "place_type_results",
-                    "place_type_results": results,
+                    "type": "area_query_results",
+                    "area_query_results": results,
                 },
             )
             await self.channel_layer.send(
@@ -1009,12 +1011,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
             async with aiohttp.ClientSession() as session:
                 while next_page_token:
                     next_url = (
-                        f"https://maps.googleapis.com/maps/api/place/nearbysearch/json?pagetoken"
+                        f"https://maps.googleapis.com/maps/api/place/textsearch/json?pagetoken"
                         f"={next_page_token}&key={os.environ.get('FIREBASE_API_KEY')}"
                     )
                     tasks = [
                         asyncio.ensure_future(
-                            self.nearby_search_results(session, next_url)
+                            self.text_search_results(session, next_url)
                         )
                     ]
                     response = await asyncio.gather(*tasks)
@@ -1055,11 +1057,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     )
 
                 tasks = []
+                results_ratings = []
                 for place in place_results:
                     url = (
                         f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place['place_id']}&"
                         f"fields=formatted_phone_number,geometry,icon,name,url,website,"
-                        f"rating,vicinity,place_id&key={os.environ.get('FIREBASE_API_KEY')}"
+                        f"vicinity,place_id&key={os.environ.get('FIREBASE_API_KEY')}"
                     )
                     if (
                         intersection.covers(
@@ -1078,11 +1081,17 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     ):
                         tasks.append(
                             asyncio.ensure_future(
-                                self.get_place_type_result(session, url)
+                                self.get_area_query_result(session, url)
                             )
                         )
+                        if place.get("rating"):
+                            results_ratings.append(place["rating"])
+                        else:
+                            results_ratings.append(None)
 
                 results = await asyncio.gather(*tasks)
+                for index, rating in enumerate(results_ratings):
+                    results[index]["rating"] = rating
 
             await self.channel_layer.send(
                 self.channel_name,
@@ -1117,7 +1126,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             except aiohttp.ContentTypeError:
                 logger.error(f"Place id refresh failed. {await resp.text()}")
 
-    async def get_place_type_result(self, session, url):
+    async def get_area_query_result(self, session, url):
         async with session.get(url) as resp:
             try:
                 result = await resp.json()
@@ -1541,10 +1550,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
         # Send message to WebSocket
         await self.send(text_data=json.dumps({"new_room_name": name}))
 
-    async def place_type(self, event):
-        choice = event["place_type"]
+    async def area_query(self, event):
+        area_query = event["area_query"]
         # Send message to WebSocket
-        await self.send(text_data=json.dumps({"place_type": choice}))
+        await self.send(text_data=json.dumps({"area_query": area_query}))
 
     async def members(self, event):
         members = event["members"]
@@ -1639,9 +1648,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
         # Send message to WebSocket
         await self.send(text_data=json.dumps({"refresh_allowed_status": True}))
 
-    async def refresh_place_type(self, event):
+    async def refresh_area_query(self, event):
         # Send message to WebSocket
-        await self.send(text_data=json.dumps({"refresh_place_type": True}))
+        await self.send(text_data=json.dumps({"refresh_area_query": True}))
 
     async def refresh_places(self, event):
         # Send message to WebSocket
@@ -1652,11 +1661,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
         # Send message to WebSocket
         await self.send(text_data=json.dumps({"places": places}))
 
-    async def place_type_results(self, event):
-        place_type_results = event["place_type_results"]
+    async def area_query_results(self, event):
+        area_query_results = event["area_query_results"]
         # Send message to WebSocket
         await self.send(
-            text_data=json.dumps({"place_type_results": place_type_results})
+            text_data=json.dumps({"area_query_results": area_query_results})
         )
 
     async def next_page_place_results(self, event):
