@@ -11,7 +11,6 @@ import requests as requests
 from asgiref.sync import async_to_sync
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
-from shapely.geometry import Polygon, Point, MultiPolygon
 
 from api.models import (
     Message,
@@ -913,43 +912,17 @@ class ChatConsumer(AsyncWebsocketConsumer):
             lat = input_payload["lat"]
             lng = input_payload["lng"]
             place_results = []
-            intersection = await self.fetch_area()
             async with aiohttp.ClientSession() as session:
-                url = f"https://maps.googleapis.com/maps/api/place/textsearch/json?&query={query}&location={lat},{lng}&radius={radius}&key={os.environ.get('FIREBASE_API_KEY')}"
+                url = (
+                    f"https://maps.googleapis.com/maps/api/place/textsearch/json?&query={query}&location={lat},{lng}&"
+                    f"radius={radius}&key={os.environ.get('FIREBASE_API_KEY')}"
+                )
                 tasks = [asyncio.ensure_future(self.text_search_results(session, url))]
                 response = await asyncio.gather(*tasks)
                 response = response[0]
                 next_page_token = response.get("next_page_token", "")
                 place_results += response["results"]
                 logger.info(f"{place_results}")
-                if intersection["type"] == "MultiPolygon":
-                    polygons = []
-                    for polygon in intersection["coordinates"]:
-                        subpolygons = []
-                        for subpolygon in polygon:
-                            coordinates = []
-                            for lng, lat in subpolygon:
-                                coordinates.append((lng, lat))
-                            subpolygons.append(Polygon(coordinates))
-                        polygons.append(
-                            Polygon(
-                                subpolygons[0].exterior.coords,
-                                [hole.exterior.coords for hole in subpolygons[1:]],
-                            )
-                        )
-                    intersection = MultiPolygon(polygons)
-                elif intersection["type"] == "Polygon":
-                    subpolygons = []
-                    for subpolygon in intersection["coordinates"]:
-                        coordinates = []
-                        for lng, lat in subpolygon:
-                            coordinates.append((lng, lat))
-                        subpolygons.append(Polygon(coordinates))
-                    intersection = Polygon(
-                        subpolygons[0].exterior.coords,
-                        [hole.exterior.coords for hole in subpolygons[1:]],
-                    )
-
                 tasks = []
                 results_ratings = []
                 for place in place_results:
@@ -958,30 +931,13 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         f"fields=formatted_phone_number,geometry,icon,name,url,website,"
                         f"vicinity,place_id&key={os.environ.get('FIREBASE_API_KEY')}"
                     )
-                    if (
-                        intersection.covers(
-                            Point(
-                                place["geometry"]["location"]["lng"],
-                                place["geometry"]["location"]["lat"],
-                            )
-                        )
-                        or intersection.distance(
-                            Point(
-                                place["geometry"]["location"]["lng"],
-                                place["geometry"]["location"]["lat"],
-                            )
-                        )
-                        < 1e-3
-                    ):
-                        tasks.append(
-                            asyncio.ensure_future(
-                                self.get_area_query_result(session, url)
-                            )
-                        )
-                        if place.get("rating"):
-                            results_ratings.append(place["rating"])
-                        else:
-                            results_ratings.append(None)
+                    tasks.append(
+                        asyncio.ensure_future(self.get_area_query_result(session, url))
+                    )
+                    if place.get("rating"):
+                        results_ratings.append(place["rating"])
+                    else:
+                        results_ratings.append(None)
 
                 results = await asyncio.gather(*tasks)
                 for index, rating in enumerate(results_ratings):
@@ -1007,7 +963,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
         if not user_not_allowed:
             next_page_token = input_payload["token"]
             place_results = []
-            intersection = await self.fetch_area()
             async with aiohttp.ClientSession() as session:
                 while next_page_token:
                     next_url = (
@@ -1028,34 +983,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         new_next_page_token = response.get("next_page_token", "")
                         break
 
-                if intersection["type"] == "MultiPolygon":
-                    polygons = []
-                    for polygon in intersection["coordinates"]:
-                        subpolygons = []
-                        for subpolygon in polygon:
-                            coordinates = []
-                            for lng, lat in subpolygon:
-                                coordinates.append((lng, lat))
-                            subpolygons.append(Polygon(coordinates))
-                        polygons.append(
-                            Polygon(
-                                subpolygons[0].exterior.coords,
-                                [hole.exterior.coords for hole in subpolygons[1:]],
-                            )
-                        )
-                    intersection = MultiPolygon(polygons)
-                elif intersection["type"] == "Polygon":
-                    subpolygons = []
-                    for subpolygon in intersection["coordinates"]:
-                        coordinates = []
-                        for lng, lat in subpolygon:
-                            coordinates.append((lng, lat))
-                        subpolygons.append(Polygon(coordinates))
-                    intersection = Polygon(
-                        subpolygons[0].exterior.coords,
-                        [hole.exterior.coords for hole in subpolygons[1:]],
-                    )
-
                 tasks = []
                 results_ratings = []
                 for place in place_results:
@@ -1064,30 +991,13 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         f"fields=formatted_phone_number,geometry,icon,name,url,website,"
                         f"vicinity,place_id&key={os.environ.get('FIREBASE_API_KEY')}"
                     )
-                    if (
-                        intersection.covers(
-                            Point(
-                                place["geometry"]["location"]["lng"],
-                                place["geometry"]["location"]["lat"],
-                            )
-                        )
-                        or intersection.distance(
-                            Point(
-                                place["geometry"]["location"]["lng"],
-                                place["geometry"]["location"]["lat"],
-                            )
-                        )
-                        < 1e-3
-                    ):
-                        tasks.append(
-                            asyncio.ensure_future(
-                                self.get_area_query_result(session, url)
-                            )
-                        )
-                        if place.get("rating"):
-                            results_ratings.append(place["rating"])
-                        else:
-                            results_ratings.append(None)
+                    tasks.append(
+                        asyncio.ensure_future(self.get_area_query_result(session, url))
+                    )
+                    if place.get("rating"):
+                        results_ratings.append(place["rating"])
+                    else:
+                        results_ratings.append(None)
 
                 results = await asyncio.gather(*tasks)
                 for index, rating in enumerate(results_ratings):
