@@ -922,7 +922,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 response = response[0]
                 next_page_token = response.get("next_page_token", "")
                 place_results += response["results"]
-                logger.info(f"{place_results}")
                 tasks = []
                 results_ratings = []
                 for place in place_results:
@@ -948,12 +947,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 {
                     "type": "area_query_results",
                     "area_query_results": results,
-                },
-            )
-            await self.channel_layer.send(
-                self.channel_name,
-                {
-                    "type": "next_page_places_token",
                     "next_page_places_token": next_page_token,
                 },
             )
@@ -1009,12 +1002,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     "type": "next_page_place_results",
                     "next_page_place_results": results,
                     "token_used": next_page_token,
-                },
-            )
-            await self.channel_layer.send(
-                self.channel_name,
-                {
-                    "type": "next_page_places_token",
                     "next_page_places_token": new_next_page_token,
                 },
             )
@@ -1573,27 +1560,28 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     async def area_query_results(self, event):
         area_query_results = event["area_query_results"]
+        token = event["next_page_places_token"]
         # Send message to WebSocket
         await self.send(
-            text_data=json.dumps({"area_query_results": area_query_results})
+            text_data=json.dumps(
+                {
+                    "area_query_results": area_query_results,
+                    "next_page_places_token": token,
+                }
+            )
         )
 
     async def next_page_place_results(self, event):
         next_page_place_results = event["next_page_place_results"]
         token_used = event["token_used"]
+        token = event["next_page_places_token"]
         # Send message to WebSocket
         await self.send(
             text_data=json.dumps(
                 {
                     "next_page_place_results": next_page_place_results,
                     "token_used": token_used,
+                    "next_page_places_token": token,
                 }
             )
-        )
-
-    async def next_page_places_token(self, event):
-        next_page_places_token = event["next_page_places_token"]
-        # Send message to WebSocket
-        await self.send(
-            text_data=json.dumps({"next_page_places_token": next_page_places_token})
         )
