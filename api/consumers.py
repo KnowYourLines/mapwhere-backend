@@ -505,8 +505,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
         user = User.objects.get(username=username)
         self.room.joinrequest_set.filter(user=user).delete()
 
+    def user_is_not_room_member(self):
+        return self.user not in self.room.members.all()
+
     def user_not_allowed(self):
-        return self.user not in self.room.members.all() and self.room.private
+        return self.user_is_not_room_member() and self.room.private
 
     def get_room_location_bubbles(self):
         room_location_bubbles = list(self.room.locationbubble_set.all().values())
@@ -553,6 +556,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def get_isochrone_service_region(self, location_latitude, location_longitude):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             async with aiohttp.ClientSession() as session:
                 travel_time_in_seconds = 180
                 walk_payload = {
@@ -633,6 +641,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def get_isochrones(self):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             async with aiohttp.ClientSession() as session:
                 location_bubbles = await database_sync_to_async(
                     self.get_room_location_bubbles
@@ -753,6 +766,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def handle_fetch_messages(self):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             created = await database_sync_to_async(
                 self.get_or_create_new_join_request
             )()
@@ -789,6 +807,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def handle_fetch_allowed_status(self):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             await self.channel_layer.send(
                 self.channel_name,
                 {
@@ -827,6 +850,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def handle_update_intersection(self, input_payload):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             await database_sync_to_async(self.update_room_intersection)(
                 input_payload["type"],
                 input_payload["coordinates"],
@@ -841,6 +869,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def handle_delete_intersection(self):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             await database_sync_to_async(self.delete_intersection_for_room)()
             await self.channel_layer.group_send(
                 self.room_group_name,
@@ -850,6 +883,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def handle_fetch_users_missing_locations(self):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             users = await self.find_users_missing_location_bubbles()
             await self.channel_layer.send(
                 self.channel_name,
@@ -862,6 +900,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def handle_fetch_intersection(self):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             intersection = await self.fetch_area()
             await self.channel_layer.send(
                 self.channel_name,
@@ -882,16 +925,31 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def handle_fetch_area_query(self):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             await self.fetch_area_query()
 
     async def handle_fetch_location_bubble(self):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             await self.fetch_location_bubble()
 
     async def handle_update_area_query(self, input_payload):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             await database_sync_to_async(self.update_area_query)(
                 input_payload["query"],
             )
@@ -907,6 +965,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def handle_get_area_query_results(self, input_payload):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             query = input_payload["query"]
             radius = input_payload["radius"]
             lat = input_payload["lat"]
@@ -954,6 +1017,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def get_next_page_places(self, input_payload):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             next_page_token = input_payload["token"]
             place_results = []
             async with aiohttp.ClientSession() as session:
@@ -1044,6 +1112,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def handle_fetch_places(self):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             places = await database_sync_to_async(self.fetch_places)()
             location_bubble = await database_sync_to_async(
                 self.get_user_location_bubble_for_room
@@ -1095,6 +1168,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def handle_save_place(self, input_payload):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             new_place_added = await database_sync_to_async(self.save_place)(
                 input_payload["id"], input_payload["lat"], input_payload["lng"]
             )
@@ -1115,6 +1193,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def handle_update_location_bubble(self, input_payload):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             await database_sync_to_async(self.update_location_bubble)(
                 input_payload["address"],
                 input_payload["latitude"],
@@ -1145,16 +1228,31 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def handle_fetch_room_name(self):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             await self.fetch_room_name()
 
     async def handle_fetch_members(self):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             await self.fetch_room_members()
 
     async def handle_update_room_name(self, input_payload):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             await database_sync_to_async(self.update_room_name)(input_payload["name"])
             rooms_to_notify = await database_sync_to_async(
                 self.get_rooms_of_all_members
@@ -1172,6 +1270,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def exit_room(self, input_payload):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             rooms_to_notify = await database_sync_to_async(
                 self.get_rooms_of_all_members
             )()
@@ -1200,6 +1303,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def handle_approve_user(self, input_payload):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             await database_sync_to_async(self.approve_room_member)(
                 input_payload["username"]
             )
@@ -1243,6 +1351,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def handle_approve_all_users(self):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             await database_sync_to_async(self.approve_all_room_members)()
             rooms_to_notify = await database_sync_to_async(
                 self.get_rooms_of_all_members
@@ -1286,6 +1399,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def handle_reject_user(self, input_payload):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             await database_sync_to_async(self.reject_room_member)(
                 input_payload["username"]
             )
@@ -1297,21 +1415,41 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def handle_fetch_join_requests(self):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             await self.fetch_join_requests()
 
     async def handle_fetch_user_notifications(self):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             await self.fetch_user_notifications()
 
     async def handle_fetch_privacy(self):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             await self.fetch_privacy()
 
     async def handle_privacy_update(self, input_payload):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             await database_sync_to_async(self.update_privacy)(input_payload["privacy"])
             await self.channel_layer.group_send(
                 self.room_group_name,
@@ -1385,6 +1523,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def handle_message(self, input_payload):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            user_not_in_room = await database_sync_to_async(
+                self.user_is_not_room_member
+            )()
+            if user_not_in_room:
+                await self.join_room()
             message = input_payload["message"]
             display_name = input_payload["user"]
             await database_sync_to_async(self.create_new_message)(message)
