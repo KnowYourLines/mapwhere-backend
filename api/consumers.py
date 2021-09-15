@@ -765,12 +765,17 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     async def handle_fetch_messages(self):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
-        if user_not_allowed:
+        if not user_not_allowed:
             user_not_in_room = await database_sync_to_async(
                 self.user_is_not_room_member
             )()
             if user_not_in_room:
                 await self.join_room()
+            await database_sync_to_async(self.fetch_messages)()
+
+    async def handle_fetch_allowed_status(self):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if user_not_allowed:
             created = await database_sync_to_async(
                 self.get_or_create_new_join_request
             )()
@@ -796,29 +801,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 },
             )
         else:
-            await self.channel_layer.send(
-                self.channel_name,
-                {
-                    "type": "allowed",
-                },
-            )
-            await database_sync_to_async(self.fetch_messages)()
-
-    async def handle_fetch_allowed_status(self):
-        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
-        if user_not_allowed:
             user_not_in_room = await database_sync_to_async(
                 self.user_is_not_room_member
             )()
             if user_not_in_room:
                 await self.join_room()
-            await self.channel_layer.send(
-                self.channel_name,
-                {
-                    "type": "not_allowed",
-                },
-            )
-        else:
             await self.channel_layer.send(
                 self.channel_name,
                 {
@@ -1298,6 +1285,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
             await self.channel_layer.group_send(
                 input_payload["room_id"],
                 {"type": "recalculate_intersection"},
+            )
+            await self.channel_layer.group_send(
+                input_payload["room_id"],
+                {"type": "refresh_allowed_status"},
             )
 
     async def handle_approve_user(self, input_payload):
