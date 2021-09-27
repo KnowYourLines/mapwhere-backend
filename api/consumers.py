@@ -136,8 +136,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
         self.user.save()
 
     def update_room_name(self, new_name):
-        self.room.display_name = new_name
-        self.room.save()
+        room = self.room
+        room.display_name = new_name
+        room.save()
+        return room
 
     def update_privacy(self, private):
         self.room.private = private
@@ -368,14 +370,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
             pass
 
     async def fetch_room_name(self):
-        self.room = await database_sync_to_async(self.get_room)(self.room_group_name)
-        if not self.room.display_name:
-            await database_sync_to_async(self.update_room_name)(str(self.room.id))
+        room = await database_sync_to_async(self.get_room)(self.room_group_name)
+        if not room.display_name:
+            room = await database_sync_to_async(self.update_room_name)(str(room.id))
         await self.channel_layer.send(
             self.channel_name,
             {
                 "type": "room_name",
-                "new_room_name": f"{self.room.display_name}",
+                "new_room_name": f"{room.display_name}",
             },
         )
 
