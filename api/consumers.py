@@ -1510,7 +1510,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 self.room_group_name,
                 {"type": "refresh_users_missing_locations"},
             )
-            await self.fetch_room_name()
 
     async def handle_message(self, input_payload):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
