@@ -794,11 +794,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 },
             )
         else:
-            user_not_in_room = await database_sync_to_async(
-                self.user_is_not_room_member
-            )()
-            if user_not_in_room:
-                await self.join_room()
             await self.channel_layer.send(
                 self.channel_name,
                 {
