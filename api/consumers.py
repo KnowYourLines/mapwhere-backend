@@ -405,9 +405,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
         return list(self.room.members.all().values("display_name"))
 
     def update_room_members(self, room, user):
+        added = False
         if user not in room.members.all():
             room.members.add(user)
             self.create_user_joined_notification_for_all_room_members(user_joining=user)
+            added = True
+        return added
 
     def leave_room(self, room_id):
         room_to_leave = Room.objects.get(id=room_id)
@@ -652,8 +655,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 location_bubbles = await database_sync_to_async(
                     self.get_room_location_bubbles
                 )()
-
-                if location_bubbles:
+                members = await database_sync_to_async(self.get_room_members)()
+                if location_bubbles and (
+                    (len(members) > 1 and len(location_bubbles) > 1)
+                    or (len(members) == 1 and len(location_bubbles) == 1)
+                ):
                     tasks = []
                     for location_bubble in location_bubbles:
                         payload = {
@@ -1493,7 +1499,15 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     "type": "allowed",
                 },
             )
-            await database_sync_to_async(self.update_room_members)(self.room, self.user)
+            user_was_added = await database_sync_to_async(self.update_room_members)(
+                self.room, self.user
+            )
+            if user_was_added:
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {"type": "recalculate_intersection"},
+                )
+
             rooms_to_notify = await database_sync_to_async(
                 self.get_rooms_of_all_members
             )()
