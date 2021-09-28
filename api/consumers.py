@@ -1262,7 +1262,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             user_not_in_room = await database_sync_to_async(
                 self.user_is_not_room_member
             )()
-            if user_not_in_room:
+            if user_not_in_room and self.room.id != input_payload["room_id"]:
                 await self.join_room()
             rooms_to_notify = await database_sync_to_async(
                 self.get_rooms_of_all_members
