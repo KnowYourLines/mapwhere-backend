@@ -920,31 +920,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 response = response[0]
                 next_page_token = response.get("next_page_token", "")
                 place_results += response["results"]
-                tasks = []
-                results_ratings = []
-                for place in place_results:
-                    url = (
-                        f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place['place_id']}&"
-                        f"fields=formatted_phone_number,geometry,icon,name,url,website,"
-                        f"vicinity,place_id&key={os.environ.get('FIREBASE_API_KEY')}"
-                    )
-                    tasks.append(
-                        asyncio.ensure_future(self.get_area_query_result(session, url))
-                    )
-                    if place.get("rating"):
-                        results_ratings.append(place["rating"])
-                    else:
-                        results_ratings.append(None)
-
-                results = await asyncio.gather(*tasks)
-                for index, rating in enumerate(results_ratings):
-                    results[index]["rating"] = rating
-
             await self.channel_layer.send(
                 self.channel_name,
                 {
                     "type": "area_query_results",
-                    "area_query_results": results,
+                    "area_query_results": place_results,
                     "next_page_places_token": next_page_token,
                 },
             )
@@ -974,31 +954,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         new_next_page_token = response.get("next_page_token", "")
                         break
 
-                tasks = []
-                results_ratings = []
-                for place in place_results:
-                    url = (
-                        f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place['place_id']}&"
-                        f"fields=formatted_phone_number,geometry,icon,name,url,website,"
-                        f"vicinity,place_id&key={os.environ.get('FIREBASE_API_KEY')}"
-                    )
-                    tasks.append(
-                        asyncio.ensure_future(self.get_area_query_result(session, url))
-                    )
-                    if place.get("rating"):
-                        results_ratings.append(place["rating"])
-                    else:
-                        results_ratings.append(None)
-
-                results = await asyncio.gather(*tasks)
-                for index, rating in enumerate(results_ratings):
-                    results[index]["rating"] = rating
-
             await self.channel_layer.send(
                 self.channel_name,
                 {
                     "type": "next_page_place_results",
-                    "next_page_place_results": results,
+                    "next_page_place_results": place_results,
                     "token_used": next_page_token,
                     "next_page_places_token": new_next_page_token,
                 },
@@ -1020,15 +980,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 return result
             except aiohttp.ContentTypeError:
                 logger.error(f"Place id refresh failed. {await resp.text()}")
-
-    async def get_area_query_result(self, session, url):
-        async with session.get(url) as resp:
-            try:
-                result = await resp.json()
-                result = result["result"]
-                return result
-            except aiohttp.ContentTypeError:
-                logger.error(f"Getting place details failed. {await resp.text()}")
 
     async def get_distance_matrix(self, session, url):
         async with session.get(url) as resp:
