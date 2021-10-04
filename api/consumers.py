@@ -11,6 +11,7 @@ import requests as requests
 from asgiref.sync import async_to_sync
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
+from shapely.geometry import MultiPolygon, Polygon, Point
 
 from api.models import (
     Message,
@@ -1064,6 +1065,139 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def handle_update_location_bubble(self, input_payload):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
+            async with aiohttp.ClientSession() as session:
+                travel_time_in_seconds = 180
+                walk_payload = {
+                    "sources": [
+                        {
+                            "lat": input_payload["latitude"],
+                            "lng": input_payload["longitude"],
+                            "id": f"region for {input_payload['latitude']}, {input_payload['longitude']}",
+                            "tm": {"walk": {}},
+                        }
+                    ],
+                    "polygon": {
+                        "serializer": "geojson",
+                        "srid": 4326,
+                        "values": [travel_time_in_seconds],
+                    },
+                }
+                transit_payload = {
+                    "sources": [
+                        {
+                            "lat": input_payload["latitude"],
+                            "lng": input_payload["longitude"],
+                            "id": f"region for {input_payload['latitude']}, {input_payload['longitude']}",
+                            "tm": {"transit": {}},
+                        }
+                    ],
+                    "polygon": {
+                        "serializer": "geojson",
+                        "srid": 4326,
+                        "values": [travel_time_in_seconds],
+                    },
+                }
+                service_regions = [
+                    "africa",
+                    "central_america",
+                    "south_america",
+                    "australia",
+                    "britishisles",
+                    "asia",
+                    "easterneurope",
+                    "northamerica",
+                    "westcentraleurope",
+                ]
+                tasks = []
+                for region in service_regions:
+                    url = f"https://service.targomo.com/{region}/v1/polygon?key={os.environ.get('TARGOMO_API_KEY')}"
+                    tasks.append(
+                        asyncio.ensure_future(
+                            self.get_region_isochrone(
+                                session,
+                                url,
+                                walk_payload,
+                                region,
+                            )
+                        )
+                    )
+                    tasks.append(
+                        asyncio.ensure_future(
+                            self.get_region_isochrone(
+                                session,
+                                url,
+                                transit_payload,
+                                region,
+                            )
+                        )
+                    )
+                region_isochrones = await asyncio.gather(*tasks)
+                processed_region_isochrones = []
+                for region_isochrone in region_isochrones:
+                    polygons = []
+                    for polygon in region_isochrone["isochrone"]["geometry"][
+                        "coordinates"
+                    ]:
+                        subpolygons = []
+                        for subpolygon in polygon:
+                            coordinates = []
+                            for lng, lat in subpolygon:
+                                coordinates.append((lng, lat))
+                            subpolygons.append(Polygon(coordinates))
+                        polygons.append(
+                            Polygon(
+                                subpolygons[0].exterior.coords,
+                                [hole.exterior.coords for hole in subpolygons[1:]],
+                            )
+                        )
+                    processed_isochrone = MultiPolygon(polygons)
+                    processed_region_isochrones.append(
+                        {
+                            "isochrone": processed_isochrone,
+                            "region": region_isochrone["region"],
+                            "travel_mode": region_isochrone["travel_mode"],
+                        }
+                    )
+                possible_regions = []
+                for region_isochrone in processed_region_isochrones:
+                    if (
+                        region_isochrone["isochrone"].covers(
+                            Point(
+                                input_payload["longitude"],
+                                input_payload["latitude"],
+                            )
+                        )
+                        or region_isochrone["isochrone"].distance(
+                            Point(
+                                input_payload["longitude"],
+                                input_payload["latitude"],
+                            )
+                        )
+                        < 1e-3
+                    ):
+                        possible_regions.append(
+                            {
+                                "name": region_isochrone["region"],
+                                "travel_mode": region_isochrone["travel_mode"],
+                                "area": region_isochrone["isochrone"].area,
+                            }
+                        )
+                if possible_regions:
+                    user_region = possible_regions[0]
+                    for region in possible_regions[1:]:
+                        if (
+                            user_region["area"] < region["area"]
+                            and user_region["travel_mode"] == "walk"
+                            and region["travel_mode"] == "transit"
+                            and region["name"]
+                        ):
+                            user_region = region
+                    isochrone_service_region = user_region["name"]
+                else:
+                    logger.error(
+                        f"Could not find isochrone service region for location bubble: {input_payload}"
+                    )
+                logger.info(isochrone_service_region)
             await database_sync_to_async(self.update_location_bubble)(
                 input_payload["address"],
                 input_payload["latitude"],
@@ -1071,7 +1205,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 input_payload["transportation"],
                 input_payload["hours"],
                 input_payload["minutes"],
-                input_payload["region"],
+                isochrone_service_region,
                 input_payload["place_id"],
             )
             await self.channel_layer.group_send(
