@@ -1189,7 +1189,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                             user_region["area"] < region["area"]
                             and user_region["travel_mode"] == "walk"
                             and region["travel_mode"] == "transit"
-                            and region["name"]
+                            and region["name"] != "central_america"
                         ):
                             user_region = region
                     isochrone_service_region = user_region["name"]
