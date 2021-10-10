@@ -49,6 +49,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
     def update_user_last_logged_in_timestamp(self):
         self.user.last_logged_in = datetime.datetime.utcnow()
 
+    @staticmethod
+    def update_place_last_saved_timestamp(place):
+        place.last_saved = datetime.datetime.utcnow()
+        place.save()
+
     async def connect(self):
         self.room_group_name = self.scope["url_route"]["kwargs"]["room_name"]
         self.room = await database_sync_to_async(self.get_room)(self.room_group_name)
@@ -115,7 +120,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             },
         )
 
-    def save_place(self, place_id, lat, lng):
+    def save_place(self, place_id, lat, lng, *, update_timestamp=True):
         place, created = Place.objects.update_or_create(
             room=self.room,
             lng=lng,
@@ -124,12 +129,16 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 "place_id": place_id,
             },
         )
-        if created:
-            self.added_place_notification()
-        return created
+        self.added_place_notification()
+        if update_timestamp:
+            self.update_place_last_saved_timestamp(place)
 
     def fetch_places(self):
-        places = list(self.room.place_set.all().values("place_id", "lat", "lng"))
+        places = list(
+            self.room.place_set.order_by("-last_saved")[:10].values(
+                "place_id", "lat", "lng"
+            )
+        )
         return places
 
     def update_display_name(self, new_name):
@@ -977,6 +986,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         result_place_id,
                         result_location["lat"],
                         result_location["lng"],
+                        update_timestamp=False,
                     )
                 return result
             except aiohttp.ContentTypeError:
@@ -1045,22 +1055,21 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def handle_save_place(self, input_payload):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
-            new_place_added = await database_sync_to_async(self.save_place)(
+            await database_sync_to_async(self.save_place)(
                 input_payload["id"], input_payload["lat"], input_payload["lng"]
             )
-            if new_place_added:
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_places"},
+            )
+            rooms_to_notify = await database_sync_to_async(
+                self.get_rooms_of_all_members
+            )()
+            for room in rooms_to_notify:
                 await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "refresh_places"},
+                    room,
+                    {"type": "refresh_notifications"},
                 )
-                rooms_to_notify = await database_sync_to_async(
-                    self.get_rooms_of_all_members
-                )()
-                for room in rooms_to_notify:
-                    await self.channel_layer.group_send(
-                        room,
-                        {"type": "refresh_notifications"},
-                    )
 
     async def handle_update_location_bubble(self, input_payload):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()

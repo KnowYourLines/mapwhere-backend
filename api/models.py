@@ -53,6 +53,7 @@ class Place(models.Model):
     place_id = models.TextField()
     lng = models.FloatField()
     lat = models.FloatField()
+    last_saved = models.DateTimeField(auto_now_add=True)
 
 
 class LocationBubble(models.Model):
