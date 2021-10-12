@@ -1055,9 +1055,13 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         )
                     )
                 results = await asyncio.gather(*tasks)
+                distance_matrix = results[-1]
+                for index, place in enumerate(results[:-1]):
+                    place["travel_time"] = distance_matrix[index]["duration"]
+                    place["distance"] = distance_matrix[index]["distance"]
                 await self.channel_layer.send(
                     self.channel_name,
-                    {"type": "places", "places": results},
+                    {"type": "places", "places": results[:-1]},
                 )
 
     async def handle_save_place(self, input_payload):
