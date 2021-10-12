@@ -1059,9 +1059,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 for index, place in enumerate(results[:-1]):
                     place["travel_time"] = distance_matrix[index]["duration"]
                     place["distance"] = distance_matrix[index]["distance"]
+                results = sorted(
+                    results[:-1], key=lambda result: result["travel_time"]["value"]
+                )
                 await self.channel_layer.send(
                     self.channel_name,
-                    {"type": "places", "places": results[:-1]},
+                    {"type": "places", "places": results},
                 )
 
     async def handle_save_place(self, input_payload):
