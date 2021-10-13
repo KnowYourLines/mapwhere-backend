@@ -878,14 +878,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     "intersection": intersection,
                 },
             )
-            location_bubbles = await database_sync_to_async(
-                self.get_room_location_bubbles
-            )()
-            if not intersection and location_bubbles:
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {"type": "recalculate_intersection"},
-                )
             await self.channel_layer.send(
                 self.channel_name,
                 {"type": "refresh_users_missing_locations"},
