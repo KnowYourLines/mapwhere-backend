@@ -300,7 +300,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         unobserved_notifications = list(
             self.user.notification_set.filter(
                 room=self.room, timestamp__lte=self.user.last_logged_in, read=False
-            ).values("message", "user_location", "added_place")
+            ).values("message", "user_location", "added_place", "voted_place")
         )
         return unobserved_notifications
 
@@ -347,7 +347,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         hightlight_chat = True
                     if notification.get("user_location"):
                         highlight_area = True
-                    if notification.get("added_place"):
+                    if notification.get("added_place") or notification.get(
+                        "voted_place"
+                    ):
                         highlight_vote = True
                 if hightlight_chat:
                     await self.channel_layer.send(
@@ -1081,7 +1083,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         )
                     )
                 results = await asyncio.gather(*tasks)
-                if results:
+                if results and location_bubble:
                     distance_matrix = results[-1]
                     for index, place in enumerate(results[:-1]):
                         place["travel_time"] = distance_matrix[index]["duration"]
