@@ -23,6 +23,7 @@ from api.models import (
     Intersection,
     Place,
     AreaQuery,
+    Vote,
 )
 
 logger = logging.getLogger(__name__)
@@ -768,8 +769,25 @@ class ChatConsumer(AsyncWebsocketConsumer):
             asyncio.create_task(self.get_next_page_places(input_payload))
         elif input_payload.get("command") == "join_room":
             asyncio.create_task(self.join_room())
+        elif input_payload.get("command") == "vote_place":
+            asyncio.create_task(self.vote_place(input_payload))
         else:
             asyncio.create_task(self.handle_message(input_payload))
+
+    def vote_for_place(self, place_id):
+        voted_place = Place.objects.get(place_id=place_id, room=self.room)
+        Vote.objects.update_or_create(
+            room=self.room,
+            user=self.user,
+            defaults={
+                "place": voted_place,
+            },
+        )
+
+    async def vote_place(self, input_payload):
+        user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
+        if not user_not_allowed:
+            await database_sync_to_async(self.vote_for_place)(input_payload["place_id"])
 
     async def handle_fetch_messages(self):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()

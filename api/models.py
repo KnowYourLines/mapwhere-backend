@@ -56,6 +56,25 @@ class Place(models.Model):
     last_saved = models.DateTimeField(auto_now_add=True)
 
 
+class Vote(models.Model):
+    id = models.AutoField(primary_key=True)
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    room = models.ForeignKey(Room, on_delete=models.CASCADE)
+    place = models.ForeignKey(Place, on_delete=models.CASCADE)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["room", "user"], name="one_user_vote_per_room"
+            )
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self.place.room == self.room:
+            raise ValidationError(_("Place is not saved to room."))
+        super().save(*args, **kwargs)
+
+
 class LocationBubble(models.Model):
     id = models.AutoField(primary_key=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE)
