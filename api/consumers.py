@@ -321,6 +321,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 "now_public",
                 "now_private",
                 "added_place__display_name",
+                "voted_place__display_name",
             )
             .order_by("room", "-timestamp")
             .distinct("room")
@@ -465,6 +466,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
         for user in self.room.members.all():
             Notification.objects.create(
                 user=user, room=self.room, added_place=self.user
+            )
+
+    def voted_place_notification(self):
+        for user in self.room.members.all():
+            Notification.objects.create(
+                user=user, room=self.room, voted_place=self.user
             )
 
     def create_user_joined_notification_for_all_room_members(self, user_joining):
@@ -783,11 +790,20 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 "place": voted_place,
             },
         )
+        self.voted_place_notification()
 
     async def vote_place(self, input_payload):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
             await database_sync_to_async(self.vote_for_place)(input_payload["place_id"])
+            rooms_to_notify = await database_sync_to_async(
+                self.get_rooms_of_all_members
+            )()
+            for room in rooms_to_notify:
+                await self.channel_layer.group_send(
+                    room,
+                    {"type": "refresh_notifications"},
+                )
 
     async def handle_fetch_messages(self):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
