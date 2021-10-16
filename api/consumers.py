@@ -1519,11 +1519,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     "type": "allowed",
                 },
             )
+            previous_members = await database_sync_to_async(self.get_room_members)()
             user_was_added = await database_sync_to_async(self.update_room_members)(
                 self.room, self.user
             )
-            members = await database_sync_to_async(self.get_room_members)()
-            if user_was_added and len(members) > 1:
+            if user_was_added and len(previous_members) == 1:
                 await self.channel_layer.group_send(
                     self.room_group_name,
                     {"type": "recalculate_intersection"},
