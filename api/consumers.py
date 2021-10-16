@@ -11,6 +11,7 @@ import requests as requests
 from asgiref.sync import async_to_sync
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
+from django.db.models import Count, Case, When, BooleanField
 from shapely.geometry import MultiPolygon, Polygon, Point
 
 from api.models import (
@@ -136,9 +137,20 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     def fetch_places(self):
         places = list(
-            self.room.place_set.order_by("-last_saved")[:10].values(
-                "place_id", "lat", "lng"
+            self.room.place_set.values("place_id", "lat", "lng")
+            .annotate(total_votes=Count("vote"))
+            .annotate(
+                user_voted_for=Case(
+                    When(vote__user=self.user, then=True),
+                    default=False,
+                    output_field=BooleanField(),
+                )
             )
+            .order_by(
+                "-user_voted_for",
+                "-total_votes",
+                "-last_saved",
+            )[:10]
         )
         return places
 
@@ -806,6 +818,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     room,
                     {"type": "refresh_notifications"},
                 )
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "refresh_places"},
+            )
 
     async def handle_fetch_messages(self):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
@@ -1083,14 +1099,15 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         )
                     )
                 results = await asyncio.gather(*tasks)
+                for index, place in enumerate(places):
+                    results[index]["total_votes"] = place["total_votes"]
+                    results[index]["user_voted_for"] = place["user_voted_for"]
                 if results and location_bubble:
                     distance_matrix = results[-1]
                     for index, place in enumerate(results[:-1]):
                         place["travel_time"] = distance_matrix[index]["duration"]
                         place["distance"] = distance_matrix[index]["distance"]
-                    results = sorted(
-                        results[:-1], key=lambda result: result["travel_time"]["value"]
-                    )
+                    results = results[:-1]
                 await self.channel_layer.send(
                     self.channel_name,
                     {"type": "places", "places": results},
