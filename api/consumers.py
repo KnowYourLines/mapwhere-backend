@@ -335,6 +335,13 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 "added_place__display_name",
                 "voted_place__display_name",
             )
+            .annotate(
+                current_room=Case(
+                    When(room=self.room, then=True),
+                    default=False,
+                    output_field=BooleanField(),
+                )
+            )
             .order_by("room", "-timestamp")
             .distinct("room")
         )
