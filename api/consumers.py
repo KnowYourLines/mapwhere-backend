@@ -1270,37 +1270,42 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         ):
                             user_region = region
                     isochrone_service_region = user_region["name"]
+                    await database_sync_to_async(self.update_location_bubble)(
+                        input_payload["address"],
+                        input_payload["latitude"],
+                        input_payload["longitude"],
+                        input_payload["transportation"],
+                        input_payload["hours"],
+                        input_payload["minutes"],
+                        isochrone_service_region,
+                        input_payload["place_id"],
+                    )
+                    await self.channel_layer.group_send(
+                        self.room_group_name,
+                        {"type": "recalculate_intersection"},
+                    )
+                    rooms_to_notify = await database_sync_to_async(
+                        self.get_rooms_of_all_members
+                    )()
+                    for room in rooms_to_notify:
+                        await self.channel_layer.group_send(
+                            room,
+                            {"type": "refresh_notifications"},
+                        )
+                        await self.channel_layer.group_send(
+                            room,
+                            {"type": "refresh_users_missing_locations"},
+                        )
                 else:
                     logger.error(
                         f"Could not find isochrone service region for location bubble: {input_payload}"
                     )
-                logger.info(isochrone_service_region)
-            await database_sync_to_async(self.update_location_bubble)(
-                input_payload["address"],
-                input_payload["latitude"],
-                input_payload["longitude"],
-                input_payload["transportation"],
-                input_payload["hours"],
-                input_payload["minutes"],
-                isochrone_service_region,
-                input_payload["place_id"],
-            )
-            await self.channel_layer.group_send(
-                self.room_group_name,
-                {"type": "recalculate_intersection"},
-            )
-            rooms_to_notify = await database_sync_to_async(
-                self.get_rooms_of_all_members
-            )()
-            for room in rooms_to_notify:
-                await self.channel_layer.group_send(
-                    room,
-                    {"type": "refresh_notifications"},
-                )
-                await self.channel_layer.group_send(
-                    room,
-                    {"type": "refresh_users_missing_locations"},
-                )
+                    await self.channel_layer.send(
+                        self.channel_name,
+                        {
+                            "type": "region_not_found",
+                        },
+                    )
 
     async def handle_fetch_room_name(self):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
@@ -1701,6 +1706,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def recalculate_intersection(self, event):
         # Send message to WebSocket
         await self.send(text_data=json.dumps({"recalculate_intersection": True}))
+
+    async def region_not_found(self, event):
+        # Send message to WebSocket
+        await self.send(text_data=json.dumps({"region_not_found": True}))
 
     async def highlight_chat(self, event):
         # Send message to WebSocket
