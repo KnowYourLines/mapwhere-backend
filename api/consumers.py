@@ -1536,9 +1536,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 self.room, self.user
             )
             if user_was_added and len(previous_members) == 1:
+                await database_sync_to_async(self.delete_intersection_for_room)()
                 await self.channel_layer.group_send(
                     self.room_group_name,
-                    {"type": "recalculate_intersection"},
+                    {"type": "refresh_area"},
                 )
 
             rooms_to_notify = await database_sync_to_async(
