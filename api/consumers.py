@@ -192,7 +192,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             location = location_bubbles.first()
             url = (
                 f"https://maps.googleapis.com/maps/api/place/details/json?place_id={location.place_id}&"
-                f"fields=place_id&key={os.environ.get('FIREBASE_API_KEY')}"
+                f"fields=place_id&key={os.environ.get('MAPS_API_KEY')}"
             )
             refreshed_place_id = requests.get(url).json()["result"]["place_id"]
             if refreshed_place_id != location.place_id:
@@ -982,7 +982,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             async with aiohttp.ClientSession() as session:
                 url = (
                     f"https://maps.googleapis.com/maps/api/place/textsearch/json?&query={query}&location={lat},{lng}&"
-                    f"radius={radius}&key={os.environ.get('FIREBASE_API_KEY')}"
+                    f"radius={radius}&key={os.environ.get('MAPS_API_KEY')}"
                 )
                 tasks = [asyncio.ensure_future(self.text_search_results(session, url))]
                 response = await asyncio.gather(*tasks)
@@ -1007,7 +1007,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 while next_page_token:
                     next_url = (
                         f"https://maps.googleapis.com/maps/api/place/textsearch/json?pagetoken"
-                        f"={next_page_token}&key={os.environ.get('FIREBASE_API_KEY')}"
+                        f"={next_page_token}&key={os.environ.get('MAPS_API_KEY')}"
                     )
                     tasks = [
                         asyncio.ensure_future(
@@ -1078,7 +1078,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     mode = "walking"
                 distance_matrix_url = (
                     f"https://maps.googleapis.com/maps/api/distancematrix/json?key="
-                    f"{os.environ.get('FIREBASE_API_KEY')}&origins=place_id:{location_bubble['place_id']}"
+                    f"{os.environ.get('MAPS_API_KEY')}&origins=place_id:{location_bubble['place_id']}"
                     f"&mode={mode}&destinations="
                 )
 
@@ -1091,7 +1091,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     url = (
                         f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place['place_id']}&"
                         f"fields=formatted_phone_number,geometry,icon,name,opening_hours,url,place_id,website,"
-                        f"rating,price_level,vicinity&key={os.environ.get('FIREBASE_API_KEY')}"
+                        f"rating,price_level,vicinity&key={os.environ.get('MAPS_API_KEY')}"
                     )
                     tasks.append(
                         asyncio.ensure_future(
