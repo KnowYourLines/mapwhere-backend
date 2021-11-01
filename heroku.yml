@@ -7,6 +7,7 @@ setup:
   config:
     SECRET_KEY: change-me-to-50-secret-characters
     DEBUG: True
+    LOCAL: False
     CORS_ALLOWED_ORIGINS: frontend
     FIREBASE_PROJECT_ID: don't
     FIREBASE_PRIVATE_KEY_ID: commit
