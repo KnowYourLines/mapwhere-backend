@@ -975,14 +975,13 @@ class ChatConsumer(AsyncWebsocketConsumer):
         user_not_allowed = await database_sync_to_async(self.user_not_allowed)()
         if not user_not_allowed:
             query = input_payload["query"]
-            radius = input_payload["radius"]
             lat = input_payload["lat"]
             lng = input_payload["lng"]
             place_results = []
             async with aiohttp.ClientSession() as session:
                 url = (
                     f"https://maps.googleapis.com/maps/api/place/textsearch/json?&query={query}&location={lat},{lng}&"
-                    f"radius={radius}&key={os.environ.get('MAPS_API_KEY')}"
+                    f"key={os.environ.get('MAPS_API_KEY')}"
                 )
                 tasks = [asyncio.ensure_future(self.text_search_results(session, url))]
                 response = await asyncio.gather(*tasks)
