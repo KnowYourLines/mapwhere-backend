@@ -152,6 +152,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 "-last_saved",
             )[:10]
         )
+        skip_index = None
+        if places[0]["user_voted_for"]:
+            for index, place in enumerate(places[1:]):
+                if place["place_id"] == places[0]["place_id"]:
+                    places[0]["total_votes"] += place["total_votes"]
+                    skip_index = index + 1
+        if skip_index:
+            return places[:skip_index] + places[skip_index + 1 :]
         return places
 
     def update_display_name(self, new_name):
