@@ -153,7 +153,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             )[:10]
         )
         skip_index = None
-        if places[0]["user_voted_for"]:
+        if len(places) > 0 and places[0]["user_voted_for"]:
             for index, place in enumerate(places[1:]):
                 if place["place_id"] == places[0]["place_id"]:
                     places[0]["total_votes"] += place["total_votes"]
